@@ -16,3 +16,6 @@ habitat_data <- read_csv(here::here('data-raw','habitat_data.csv')) |>
   select(stream, sub_basin, everything()) |>
   select(stream, everything()) |>
   glimpse()
+
+# save rda files
+usethis::use_data(habitat_data, overwrite = TRUE)
