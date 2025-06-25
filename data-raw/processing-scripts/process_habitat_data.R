@@ -7,7 +7,7 @@ library(pins)
 library(rivermile)
 
 # habitat data ----
-habitat_data <- read_csv(here::here('data-raw','habitat_data.csv')) |>
+habitat_modeled_data <- read_csv(here::here('data-raw','habitat_data.csv')) |>
   clean_names() |>
   mutate(longitude = as.numeric(longtidue)) |>
   rename(stream = river) |>
@@ -18,7 +18,7 @@ habitat_data <- read_csv(here::here('data-raw','habitat_data.csv')) |>
   glimpse()
 
 # save rda files
-usethis::use_data(habitat_data, overwrite = TRUE)
+usethis::use_data(habitat_modeled_data, overwrite = TRUE)
 
 
 ### Habitat Extent Shapefiles ----
@@ -58,16 +58,19 @@ steelhead_extent <- assign_sub_basin(steelhead_extent, sub_basin, is_point = FAL
 steelhead_extent <- steelhead_extent |>
   filter(Location %in% streams$Label)
 
-
- #TODO check on extract_waterbody functiong
-habitat_extent <- bind_rows(coho_extent, steelhead_extent, chinook_extent) |>
+habitat_extents <- bind_rows(coho_extent, steelhead_extent, chinook_extent) |>
   clean_names() |>
-  select(-c(miles2, shape_len, fid, area, perimeter, kbbnd, kbbnd_id, shape_are, shape_len_1, global_id,trend_id, link)) |>
-  mutate(stream = extract_waterbody(location),
-         data_type = "fish habitat extent") |>
-  rename(species = c_name,
-         species_full_name = s_name) |>
-  select(stream, sub_basin, data_type, location, species, species_full_name, run, everything()) |>
+  mutate(stream = tolower(location),
+         data_type = "fish habitat extent",
+         location_name = tolower(location),
+         lifestage = tolower(stage), #TODO check on these categories
+         species = tolower(c_name),
+         species_full_name = tolower(s_name),
+         run = tolower(run)) |>
+  select(-c(stage, obs_type, c_name, s_name, objectid, obs, hectares, acres, ha, mean, location, category, miles2, shape_len, fid, area, perimeter, kbbnd, kbbnd_id, shape_are, shape_len_1, global_id,trend_id, link)) |>
+  select(stream, sub_basin, data_type, location_name, species, species_full_name, lifestage, run, everything()) |>
   st_drop_geometry() |>
   glimpse()
 
+# save rda files
+usethis::use_data(habitat_extents, overwrite = TRUE)

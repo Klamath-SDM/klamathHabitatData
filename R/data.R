@@ -1,5 +1,5 @@
 #' @title Salmon Habitat Data
-#' @name habitat_data
+#' @name habitat_modeled_data
 #' @description This dataset compiles modeled salmon habitat data derived from literature reviews.
 #' It includes information on habitat model extent, data sources, and approximate geographic locations.
 #' The Stream Salmonid Simulator (S3) model incorporates two-dimensional (2D) hydraulic models for specific Klamath River sections to calculate habitat suitability based on environmental variables, such as river flow and channel width. These models use Weighted Usable Habitat Area (WUA) curves created for specific life stages and habitat types of salmon. The WUA information derived from 2D models (covering 11.3 km or 3.6% of the Klamath’s river length) is extrapolated to unmodeled reaches, enabling habitat assessments across larger river sections.
@@ -23,4 +23,31 @@
 #' @details
 #' For more infomation about these data compilation visit {the exploratory markdown}{https://github.com/Klamath-SDM/klamath-map/blob/add-habitat/data-raw/habitat_summary.html}
 #'
-'habitat_data'
+'habitat_modeled_data'
+
+
+#' @title Salmon Habitat Data
+#' @name habitat_extents
+#' @description
+#' A spatial dataset of linear stream segments in the Klamath Basin that define the extent of salmonid habitat. These features represent:
+#' \itemize{
+#'   \item The reaches or stream sections for which abundance data apply (e.g., survey areas)
+#'   \item Known or modeled distribution areas for steelhead, coho, and Chinook salmon
+#'   \item Areas where these species are currently present or have been extirpated
+#' }
+#' @format A tibble with 299 rows and 11 variables.
+#' \itemize{
+#'   \item \code{stream}: stream
+#'   \item \code{sub_basin}: sub-basin name (upper klamath, lower klamath, trinity)
+#'   \item \code{data_type}:
+#'   \item \code{location_name}: location name
+#'   \item \code{species}:
+#'   \item \code{species_full_name}:
+#'   \item \code{lifestage}:
+#'   \item \code{run}:
+#'   \item \code{latest_year}:
+#'   \item \code{link}: web link containing more information about data
+#'   \item \code{latitude}: latitude of data location
+#'   \item \code{longitude}: longitude of data location
+#'   }
+'habitat_extents'
