@@ -22,12 +22,16 @@ usethis::use_data(habitat_modeled_data, overwrite = TRUE)
 
 
 ### Habitat Extent Shapefiles ----
+# TODO: add data source:
 
 # klamath streams - for filterinng
-streams <- st_read("data-raw/habitat-extent-files/Merged_Rivers.shp")
+# streams <- st_read("data-raw/habitat-extent-files/Merged_Rivers.shp")
+streams <- rivermile::all_klamath_rivers_line
 streams <- st_transform(streams, crs = 4326)
 
-kl_basin_outline <- st_read("data-raw/klamath_basin_outline/R8_FAC_Klamath_Basin_WFL1.shp")
+kl_basin_outline <- rivermile::klamath_hucs |> st_union()
+
+#kl_basin_outline <- st_read("data-raw/klamath_basin_outline/R8_FAC_Klamath_Basin_WFL1.shp")
 kl_basin_outline <- st_transform(kl_basin_outline, crs = 4326)
 
 #chinook
@@ -40,23 +44,27 @@ centroids <- st_centroid(chinook_extent)
 chinook_extent$longitude <- st_coordinates(centroids)[, 1]
 chinook_extent$latitude  <- st_coordinates(centroids)[, 2]
 chinook_extent <- assign_sub_basin(chinook_extent, sub_basin, is_point = FALSE)
-chinook_extent <- chinook_extent |>
-  filter(Location %in% streams$Label)
+
+# MW 3/6 - I am removing this - we can filter to the mainstems later but it seems like a lot of data is getting lost
+#chinook_extent <- chinook_extent |>
+ # filter(Location %in% streams$river)
 
 #coho
 coho_extent <- read_sf("data-raw/habitat-extent-files/Coho_Abundance_Linear.shp")
 coho_extent <- st_transform(coho_extent, crs = 4326)
 coho_extent <- st_intersection(coho_extent, kl_basin_outline)
 coho_extent <- assign_sub_basin(coho_extent, sub_basin, is_point = FALSE)
-coho_extent <- coho_extent |>
-  filter(Location %in% streams$Label)
+
+#coho_extent <- coho_extent |>
+ # filter(Location %in% streams$river)
+
 # steelhead
 steelhead_extent <- read_sf("data-raw/habitat-extent-files/Steelhead_Abundance_Linear.shp")
 steelhead_extent <- st_transform(steelhead_extent, crs = 4326)
 steelhead_extent <- st_intersection(steelhead_extent, kl_basin_outline)
 steelhead_extent <- assign_sub_basin(steelhead_extent, sub_basin, is_point = FALSE)
-steelhead_extent <- steelhead_extent |>
-  filter(Location %in% streams$Label)
+#steelhead_extent <- steelhead_extent |>
+ # filter(Location %in% streams$river)
 
 habitat_extents <- bind_rows(coho_extent, steelhead_extent, chinook_extent) |>
   clean_names() |>
@@ -67,9 +75,11 @@ habitat_extents <- bind_rows(coho_extent, steelhead_extent, chinook_extent) |>
          species = tolower(c_name),
          species_full_name = tolower(s_name),
          run = tolower(run)) |>
-  select(-c(stage, obs_type, c_name, s_name, objectid, obs, hectares, acres, ha, mean, location, category, miles2, shape_len, fid, area, perimeter, kbbnd, kbbnd_id, shape_are, shape_len_1, global_id,trend_id, link)) |>
-  select(stream, sub_basin, data_type, location_name, species, species_full_name, lifestage, run, everything()) |>
-  st_drop_geometry() |>
+  select(-c(stage, obs_type, c_name, s_name, objectid, obs,  mean, location, category,  shape_len, trend_id, link, location_name)) |>
+  mutate(location = rivermile::extract_waterbody_short(stream)) |>
+  filter(!is.na(location)) |>
+  select(-stream) |>
+  select(location, sub_basin, data_type, species, species_full_name, lifestage, run, everything()) |>
   glimpse()
 
 # save rda files

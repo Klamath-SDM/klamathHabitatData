@@ -195,7 +195,7 @@ output$hab_plot <- renderPlot({
     geom_line(linewidth = 1) +
     facet_wrap(~life_stage, ncol = 1, scales = "free_y") +
     labs(
-      title = paste("Unit", u),
+      title = paste("Unit Number: ", u),
       x = "Flow (cfs)",
       y = "Habitat (m²)"
     ) +

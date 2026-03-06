@@ -35,19 +35,36 @@
 #'   \item Known or modeled distribution areas for steelhead, coho, and Chinook salmon
 #'   \item Areas where these species are currently present or have been extirpated
 #' }
-#' @format A tibble with 299 rows and 11 variables.
+#' @format A tibble with 744 rows and 11 variables.
 #' \itemize{
-#'   \item \code{stream}: stream
-#'   \item \code{sub_basin}: sub-basin name (upper klamath, lower klamath, trinity)
-#'   \item \code{data_type}:
-#'   \item \code{location_name}: location name
-#'   \item \code{species}:
-#'   \item \code{species_full_name}:
-#'   \item \code{lifestage}:
-#'   \item \code{run}:
-#'   \item \code{latest_year}:
-#'   \item \code{link}: web link containing more information about data
+#'   \item \code{location}: stream or river name
+#'   \item \code{subbasin}: sub-basin name (upper klamath, lower klamath, trinity)
+#'   \item \code{data_type}: data type = fish habitat extents
+#'   \item \code{species}: species name (coho, steelhead, chinook)
+#'   \item \code{species_full_name}: species full name (oncorhynchus kisutch,oncorhynchus mykiss ,oncorhynchus tshawytscha)
+#'   \item \code{lifestage}: fish life stage
+#'   \item \code{run}: species run (summer, winter, mixed, unknown, spring, fall, NA)
+#'   \item \code{latest_year}: TODO
 #'   \item \code{latitude}: latitude of data location
 #'   \item \code{longitude}: longitude of data location
+#'   \item \code{geometry}: the spatial geometry associated with each extent
 #'   }
 'habitat_extents'
+
+#' @title Fish Passage Barriers (2025)
+#' @name barriers
+#' @description
+#' A spatial dataset of priority fish barriers in the Klamath Basin. Data source: https://nrimp.dfw.state.or.us/DataClearinghouse/default.aspx?p=202&XMLname=1094.xml
+#' @format A tibble with 38 rows and 9 variables.
+#' \itemize{
+#'   \item \code{location}: mainstem location
+#'   \item \code{stream_name}: stream or river name
+#'   \item \code{barrier_type}: type of passage barrier
+#'.  \item \code{barrier_status}: status of passage barrier (partial, blocked)
+#'   \item \code{source_entity}: entity that provides the data
+#'   \item \code{species}: species impacted
+#'   \item \code{latitude}: latitude of data location
+#'   \item \code{longitude}: longitude of data location
+#'   \item \code{geometry}: the spatial geometry associated with each extent
+#'   }
+'barriers'
