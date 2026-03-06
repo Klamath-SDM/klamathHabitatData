@@ -3,7 +3,7 @@ library(sf)
 
 # data download: https://nrimp.dfw.state.or.us/DataClearinghouse/default.aspx?p=202&XMLname=1094.xml
 # documentation: https://www.oregon.gov/eis/geo/OGIC%20Approved%20Data%20Standards/Fish-Passage-Barrier-Data-Standard-v1.1-2010.pdf
-barriers_raw <- read_sf("data-raw/shapes/PriorityBarriers2025_shp/PriorityBarriers2025.shp") |>
+barriers_raw <- read_sf("data-raw/PriorityBarriers2025_shp/PriorityBarriers2025.shp") |>
   janitor::clean_names() |>
   glimpse()
 
