@@ -16,7 +16,5 @@
 *config.yml
 *.Rproj.user
 .Rproj.user/**
-data-raw/18
 data-raw/rsconnect
-data-raw/nhdplus_epasnapshot2022_or.gdb
-data-raw/PBR_Planning_Model_-_Bespoke-Sprague_River_PBR_Planning_Model
+data-raw/shapes
