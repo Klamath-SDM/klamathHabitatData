@@ -1,0 +1,136 @@
+---
+title: "Intrinsic Potential for Chinook Salmon in the Klamath Basin"
+author: "Maddee Wiggins (FlowWest)"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(sf)
+library(igraph)
+library(rivermile)
+
+```
+
+Load Data:
+
+**NHD**
+
+Downloaded via: [**nhdplusTools**](https://doi-usgs.github.io/nhdplusTools/articles/get_data_overview.html)
+
+```{r eval=FALSE, include=FALSE}
+download_dir <- download_nhdplushr(here::here("data-raw"), 1801)
+
+nhdplushr <- get_hr_data(list.files(download_dir, pattern = ".gdb", full.names = TRUE),
+                         layer = "NHDFlowline", rename = TRUE)
+
+nhd_flowline <- nhdplushr |> janitor::clean_names()
+
+saveRDS(nhd_flowline, here::here("data-raw", "shapes", "nhd_flowline_hr.rds"))
+
+```
+
+```{r}
+nhd_flowline <- readRDS(here::here("data-raw", "shapes", "nhd_flowline_hr.rds"))
+
+flowlines <- nhd_flowline |>
+  st_set_geometry("shape") |> 
+  st_intersection(klamath_hucs |> st_union())
+
+names(flowlines)[names(flowlines) == "shape"] <- "geometry"
+st_geometry(flowlines) <- "geometry"
+```
+
+```{r}
+flow_net <- flowlines 
+seed_comid <- 50000400214915
+seed_row <- flow_net |>
+  st_drop_geometry() |>
+  filter(comid == seed_comid)
+
+edges <- flow_net |>
+  st_drop_geometry() |>
+  select(comid, from_node, to_node) |> 
+  filter(!is.na(to_node))
+
+g <- graph_from_data_frame(
+  d = edges |> select(from_node, to_node),
+  directed = TRUE
+)
+
+comp <- components(g, mode = "weak")
+
+node_membership <- tibble(
+  node = names(comp$membership),
+  component_id = as.integer(comp$membership)
+)
+
+flow_comp <- flow_net |>
+  left_join(
+    node_membership |> 
+      rename(from_node = node) |> 
+      mutate(from_node = as.numeric(from_node)),
+    by = "from_node"
+  )
+
+seed_component <- flow_comp |>
+  st_drop_geometry() |>
+  filter(comid == seed_comid) |>
+  pull(component_id)
+
+flow_clean <- flow_comp |>
+  filter(component_id == seed_component)
+
+flow_filter <- flow_clean |> 
+  filter(stream_orde >= 5) |> 
+  filter(tot_da_sq_km >= 1)
+
+# flowlines_clean <- flow_clean |> 
+#   select(comid, gnis_name, lengthkm, stream_leve, stream_orde, tot_da_sq_km, slope, geometry) |> 
+#   filter(gnis_name %in% rivermile::all_klamath_rivers_line$river)
+```
+
+
+```{r}
+ggplot() +
+  geom_sf(data = flow_filter) 
+
+
+# library(leaflet)
+# 
+# leaflet() |>
+#   addTiles() |>
+#   addPolylines(
+#     data = flow_filter |> st_transform(4326),
+#     popup = ~as.character(gnis_name)
+#   )
+```
+
+### Suitability Criteria 
+
+source: https://www.fs.usda.gov/pnw/pubs/journals/pnw_2005_agrawal001.pdf
+
+```{r}
+chinook_suit <- tibble(
+  variable = c(
+    rep("gradient_percent", 3),
+    rep("valley_constraint", 3),
+    rep("discharge_m3s", 2)
+  ),
+  value = c(
+    0, 3.7, 8,        
+    1, 4, 8,        
+    0, 100          
+  ),
+  suitability = c(
+    1.0, 0.0, 0.0,  
+    0.8, 1.0, 1.0,  
+    1.0, 1.0        
+  )
+)
+
+chinook_suit
+
+```
