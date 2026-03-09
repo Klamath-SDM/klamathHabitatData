@@ -5,20 +5,16 @@
 \alias{habitat_extents}
 \title{Salmon Habitat Data}
 \format{
-A tibble with 299 rows and 11 variables.
+A tibble with 744 rows and 11 variables.
 \itemize{
-  \item \code{stream}: stream
+  \item \code{location}: stream or river name
   \item \code{sub_basin}: sub-basin name (upper klamath, lower klamath, trinity)
-  \item \code{data_type}:
-  \item \code{location_name}: location name
-  \item \code{species}:
-  \item \code{species_full_name}:
-  \item \code{lifestage}:
-  \item \code{run}:
-  \item \code{latest_year}:
-  \item \code{link}: web link containing more information about data
-  \item \code{latitude}: latitude of data location
-  \item \code{longitude}: longitude of data location
+  \item \code{data_type}: data type = fish habitat extents
+  \item \code{species}: species name (coho, steelhead, chinook)
+  \item \code{lifestage}: fish life stage
+  \item \code{run}: species run (summer, winter, mixed, unknown, spring, fall, NA)
+  \item \code{extent}: pre-or-post dam removal extent
+  \item \code{geometry}: the spatial geometry associated with each extent
   }
 }
 \usage{

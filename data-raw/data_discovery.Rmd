@@ -20,8 +20,7 @@ library(nhdplusTools)
 ```
 Watershed
 ```{r}
-klamath_basin <- sf::st_read(here::here("data-raw", "klamath_basin_outline", "WBDHU8_Klamath_Rogue.shp")) |> 
-  filter(!grepl('17', huc8)) 
+klamath_basin <- rivermile::klamath_hucs |> st_union()
 
 ggplot() +
   geom_sf(data = klamath_basin) +
@@ -31,8 +30,6 @@ ggplot() +
 ## Get Flowline Data 
 
 Using [**nhdplusTools**](https://doi-usgs.github.io/nhdplusTools/articles/get_data_overview.html)
-
-
 
 ```{r eval=FALSE, include=FALSE}
 download_dir <- download_nhdplushr(here::here("data-raw"), 1801)
