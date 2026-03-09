@@ -38,15 +38,12 @@
 #' @format A tibble with 744 rows and 11 variables.
 #' \itemize{
 #'   \item \code{location}: stream or river name
-#'   \item \code{subbasin}: sub-basin name (upper klamath, lower klamath, trinity)
+#'   \item \code{sub_basin}: sub-basin name (upper klamath, lower klamath, trinity)
 #'   \item \code{data_type}: data type = fish habitat extents
 #'   \item \code{species}: species name (coho, steelhead, chinook)
-#'   \item \code{species_full_name}: species full name (oncorhynchus kisutch,oncorhynchus mykiss ,oncorhynchus tshawytscha)
 #'   \item \code{lifestage}: fish life stage
 #'   \item \code{run}: species run (summer, winter, mixed, unknown, spring, fall, NA)
-#'   \item \code{latest_year}: TODO
-#'   \item \code{latitude}: latitude of data location
-#'   \item \code{longitude}: longitude of data location
+#'   \item \code{extent}: pre-or-post dam removal extent
 #'   \item \code{geometry}: the spatial geometry associated with each extent
 #'   }
 'habitat_extents'

@@ -26,7 +26,12 @@ barriers <- barriers_raw |>
          location = subbasin,
          latitude = fpb_lat,
          longitude = fpb_long) |>
-  mutate(location = tolower(location)) |>
+  mutate(location = tolower(location),
+         barrier_type = tolower(barrier_type),
+         barrier_status = tolower(barrier_status),
+         stream_name = tolower(stream_name),
+         species = tolower(species),
+         source_entity = tolower(source_entity)) |>
   mutate(
     location = case_when(
       location %in% c("sprague") ~ "sprague river",
