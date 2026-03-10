@@ -108,6 +108,18 @@ ggplot() +
 #   )
 ```
 
+### Drainage Area
+
+```{r}
+estimate_Q <- function(area_km2) {
+  Q <- 0.028 * area_km2^0.89
+  return(Q)
+}
+
+df$Q_mean <- estimate_Q(df$drainage_area_km2)
+
+```
+
 ### Suitability Criteria 
 
 source: https://www.fs.usda.gov/pnw/pubs/journals/pnw_2005_agrawal001.pdf
