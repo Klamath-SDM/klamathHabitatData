@@ -14,22 +14,125 @@ library(rivermile)
 
 ```
 
-Load Data:
+## Objective
 
-**NHD**
+Calculate the intrinsic potential for Chinook salmon in the Klamath basin rivers and streams
 
-Downloaded via: [**nhdplusTools**](https://doi-usgs.github.io/nhdplusTools/articles/get_data_overview.html)
+### Flowlines
 
-```{r eval=FALSE, include=FALSE}
-download_dir <- download_nhdplushr(here::here("data-raw"), 1801)
+Source: - NHDplus geodatabase downloaded from: <https://www.sciencebase.gov/catalog/item/5d30c29ae4b01d82ce84aa5e> - NHDplus user guide: <https://pubs.usgs.gov/of/2019/1096/ofr20191096.pdf>
 
-nhdplushr <- get_hr_data(list.files(download_dir, pattern = ".gdb", full.names = TRUE),
-                         layer = "NHDFlowline", rename = TRUE)
+```{r}
+flowlines <- rivermile::processed_nhd 
+```
 
-nhd_flowline <- nhdplushr |> janitor::clean_names()
+```{r}
+ggplot() +
+  geom_sf(data = rivermile::klamath_hucs |> st_union()) +
+  geom_sf(data = flowlines, color = "darkblue", alpha = 0.5) +
+  theme_minimal()
+```
 
-saveRDS(nhd_flowline, here::here("data-raw", "shapes", "nhd_flowline_hr.rds"))
+```{r}
+flowlines_ip_layers <- flowlines |> select(gnis_nm, gnis_id, slope, tot_da_sq_km = tt_d_s_)
+```
 
+### Slope
+
+```{r}
+ggplot() +
+  geom_sf(data = rivermile::klamath_hucs |> st_union()) +
+  geom_sf(data = flowlines_ip_layers, aes(color = slope)) +
+  theme_minimal()
+```
+
+### Total Drainage Area (sqkm)
+
+```{r}
+ggplot() +
+  geom_sf(data = rivermile::klamath_hucs |> st_union()) +
+  geom_sf(data = flowlines_ip_layers, aes(color = tot_da_sq_km)) +
+  theme_minimal()
+```
+
+### Estimated Discharge
+
+```{r}
+estimate_Q <- function(area_km2) {
+  Q <- 0.028 * area_km2^0.89
+  return(Q)
+}
+
+flowlines_ip_layers <- flowlines_ip_layers |> 
+  mutate(q_mean_est = estimate_Q(tot_da_sq_km))
+
+```
+
+```{r}
+ggplot() +
+  geom_sf(data = rivermile::klamath_hucs |> st_union()) +
+  geom_sf(data = flowlines_ip_layers, aes(color = q_mean_est)) +
+  theme_minimal()
+```
+
+### Bankfull Width
+
+Source: Bieger model $2.76 * DA^.399$
+
+```{r}
+
+flowlines_ip_layers <- flowlines_ip_layers |> 
+  mutate(bf_width_m = 2.76 * tot_da_sq_km^0.399)
+```
+
+```{r}
+ggplot() +
+  geom_sf(data = rivermile::klamath_hucs |> st_union()) +
+  geom_sf(data = flowlines_ip_layers, aes(color = bf_width_m)) +
+  theme_minimal()
+```
+
+### Valley Bottom Width
+
+could use this workflow from habistat: <https://github.com/FlowWest/habistat/blob/main/data-raw/scripts/terrain-attributes.md#valley-bottom-width-via-slope-cutoff-method>
+
+### Valley Width Index
+
+$V = (valley-floor-width)/(active-channel-width)$
+
+### Suitability Criteria
+
+source: <https://www.fs.usda.gov/pnw/pubs/journals/pnw_2005_agrawal001.pdf>
+
+```{r}
+chinook_suit <- tibble(
+  variable = c(
+    rep("gradient_percent", 3),
+    rep("valley_constraint", 3),
+    rep("discharge_m3s", 3)
+  ),
+  value = c(
+    0, 3.7, 8,        
+    1, 4, 8,        
+    0, 100, 100          
+  ),
+  suitability = c(
+    1.0, 0.0, 0.0,  
+    0.8, 1.0, 1.0,  
+    1, 1.0, 1.0        
+  )
+)
+
+
+ggplot() + 
+  geom_line(data = chinook_suit, aes(x = value, y = suitability)) +
+  facet_wrap(~variable, scales = "free_x") +
+  theme_minimal()
+
+```
+
+```{r}
+knitr::knit_exit()
 ```
 
 ```{r}
@@ -92,7 +195,6 @@ flow_filter <- flow_clean |>
 #   filter(gnis_name %in% rivermile::all_klamath_rivers_line$river)
 ```
 
-
 ```{r}
 ggplot() +
   geom_sf(data = flow_filter) 
@@ -106,43 +208,4 @@ ggplot() +
 #     data = flow_filter |> st_transform(4326),
 #     popup = ~as.character(gnis_name)
 #   )
-```
-
-### Drainage Area
-
-```{r}
-estimate_Q <- function(area_km2) {
-  Q <- 0.028 * area_km2^0.89
-  return(Q)
-}
-
-df$Q_mean <- estimate_Q(df$drainage_area_km2)
-
-```
-
-### Suitability Criteria 
-
-source: https://www.fs.usda.gov/pnw/pubs/journals/pnw_2005_agrawal001.pdf
-
-```{r}
-chinook_suit <- tibble(
-  variable = c(
-    rep("gradient_percent", 3),
-    rep("valley_constraint", 3),
-    rep("discharge_m3s", 2)
-  ),
-  value = c(
-    0, 3.7, 8,        
-    1, 4, 8,        
-    0, 100          
-  ),
-  suitability = c(
-    1.0, 0.0, 0.0,  
-    0.8, 1.0, 1.0,  
-    1.0, 1.0        
-  )
-)
-
-chinook_suit
-
 ```
