@@ -213,10 +213,10 @@ catchments <- rivermile::nhd_catchments |>
   st_transform(st_crs(dem))
 
 catch <- catchments |> 
-  filter(nhdplusid == '50000400080804') 
+  filter(nhdplusid == '50000400209014') 
 flow <- flowlines_ip_layers |> 
   mutate(nhdplusid = as.character(nhdplusid)) |> 
-  filter(nhdplusid == '50000400080804') |> 
+  filter(nhdplusid == '50000400209014') |> 
   st_transform(st_crs(dem))
 
 ggplot() + 
@@ -234,7 +234,7 @@ ggplot() +
 
 ```
 
-```{r}
+```{r eval=FALSE, include=FALSE}
 dem_crs <- st_crs(dem)
 
 safe_vb_width_simple <- purrr::possibly(
@@ -255,7 +255,7 @@ safe_vb_width_transect <- purrr::possibly(
 
 vb <- flowlines_ip_layers |>
   mutate(nhdplusid = as.character(nhdplusid)) |> 
-  filter(gnis_nm == "Scotch Creek") |> 
+  filter(gnis_nm == "Clear Creek") |> 
   #filter(nhdplusid %in% c("50000400015484")) |>
   mutate(flowline = map(
     geometry,
@@ -278,15 +278,23 @@ vb <- flowlines_ip_layers |>
 
 vb |> glimpse()
 
-# Looks like there's a threshold catchment size where the valley bottom width does not work
+# Looks like there's a threshold catchment size where the valley bottom width does not work... or something...
+
+saveRDS(vb, here::here("data-raw","valley_bottom_width.rds"))
 
 ```
+
+```{r}
+vb <- read_rds(here::here("data-raw","valley_bottom_width.rds"))
+```
+
 ```{r}
 flowlines_ip_layers_new <- flowlines_ip_layers |> 
   mutate(nhdplusid = as.character(nhdplusid)) |> 
-  filter(gnis_nm == "Scotch Creek") |> 
+  filter(gnis_nm == "Clear Creek") |> 
   left_join(vb |> 
-              select(-flowline, -valley_bottom_geoms)) |> glimpse()
+              select(-flowline, -valley_bottom_geoms)) |> 
+  glimpse()
 ```
 
 
@@ -299,7 +307,7 @@ flowlines_ip_layers_all <- flowlines_ip_layers_new |>
   mutate(valley_width_index = vb_width_transect/bf_width_m)
 ```
 
-```{r}
+```{r echo=FALSE}
 ggplot() +
   geom_histogram(data = flowlines_ip_layers_all, aes(x = valley_width_index))
 ```
@@ -311,19 +319,19 @@ source: <https://www.fs.usda.gov/pnw/pubs/journals/pnw_2005_agrawal001.pdf>
 ```{r}
 chinook_suit <- tibble(
   variable = c(
-    rep("gradient_percent", 3),
-    rep("valley_constraint", 3),
-    rep("discharge_m3_s", 3)
+    rep("gradient_percent", 4),
+    rep("valley_constraint", 4),
+    rep("discharge_m3_s", 4)
   ),
   value = c(
-    0, 3.7, 8,        
-    1, 4, 8,        
-    0, 100, 100          
+    0,  2, 3.7, 8,        
+    1, 2.5, 4, 8,        
+    0, 3, 100, 100          
   ),
   suitability = c(
-    1.0, 0.0, 0.0,  
-    0.8, 1.0, 1.0,  
-    1, 1.0, 1.0        
+    1.0, 0.45, 0.0, 0.0,  
+    0.8, 0.9, 1.0, 1.0,  
+    0.0, 1, 1, 1.0      
   )
 )
 
@@ -338,50 +346,29 @@ ggplot() +
 ## Calculate Intrinsic Potential 
 
 ```{r}
-make_suitability_fun <- function(df) {
-  df <- df |>
-    distinct(value, suitability) |>
-    arrange(value)
-  
-  x <- df$value
-  y <- df$suitability
-  
-  function(z) {
-    # return NA if input is NA
-    ifelse(
-      is.na(z),
-      NA_real_,
-      approx(
-        x = x,
-        y = y,
-        xout = z,
-        method = "linear",
-        rule = 2  # clamp to end values outside the range
-      )$y
-    )
-  }
+
+slope_suit <- chinook_suit |> filter(variable == "gradient_percent") |> arrange(value)
+valley_suit <- chinook_suit |> filter(variable == "valley_constraint") |> arrange(value)
+q_suit <- chinook_suit |> filter(variable == "discharge_m3_s") |> arrange(value)
+
+lookup_step <- function(x, breaks, suits) {
+  idx <- findInterval(x, breaks, rightmost.closed = TRUE)
+  suits[pmax(idx, 1)]
 }
 
-suit_funs <- chinook_suit |>
-  group_split(variable) |>
-  set_names(chinook_suit |> distinct(variable) |> pull(variable)) |>
-  map(make_suitability_fun)
-
-# extract named functions
-s_grad <- suit_funs[["gradient_percent"]]
-s_valley <- suit_funs[["valley_constraint"]]
-s_q <- suit_funs[["discharge_m3_s"]]
+slope_fun <- function(x) lookup_step(x, slope_suit$value, slope_suit$suitability)
+valley_fun <- function(x) lookup_step(x, valley_suit$value, valley_suit$suitability)
+q_fun <- function(x) lookup_step(x, q_suit$value, q_suit$suitability)
 
 ```
 
 
 ```{r}
 ip <- flowlines_ip_layers_all |> 
-  mutate(slope = slope * 100) |> 
   mutate(
-    suit_slope = s_grad(slope),
-    suit_valley = s_valley(valley_width_index),
-    suit_q = s_q(q_mean_est),
+    suit_slope = slope_fun(slope),
+    suit_valley = valley_fun(valley_width_index),
+    suit_q = q_fun(q_mean_est),
     chinook_ip = (suit_slope * suit_valley * suit_q)^(1/3)
   ) |> 
   mutate(
@@ -398,7 +385,8 @@ ip <- flowlines_ip_layers_all |>
 
 ```{r}
 ggplot() + 
-  geom_sf(data = ip, aes(color = chinook_ip_class), size = 2)
+  geom_sf(data = ip, aes(color = chinook_ip_class), size = 2) +
+  theme_minimal()
 
 ```
 
