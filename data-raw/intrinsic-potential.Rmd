@@ -9,8 +9,10 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(sf)
-library(igraph)
 library(rivermile)
+library(terra)
+library(stars)
+
 
 ```
 
@@ -20,7 +22,11 @@ Calculate the intrinsic potential for Chinook salmon in the Klamath basin rivers
 
 ### Flowlines
 
-Source: - NHDplus geodatabase downloaded from: <https://www.sciencebase.gov/catalog/item/5d30c29ae4b01d82ce84aa5e> - NHDplus user guide: <https://pubs.usgs.gov/of/2019/1096/ofr20191096.pdf>
+Source:
+
+-   NHDplus geodatabase downloaded from: <https://www.sciencebase.gov/catalog/item/5d30c29ae4b01d82ce84aa5e>
+
+-   NHDplus user guide: <https://pubs.usgs.gov/of/2019/1096/ofr20191096.pdf>
 
 ```{r}
 flowlines <- rivermile::processed_nhd 
@@ -34,7 +40,7 @@ ggplot() +
 ```
 
 ```{r}
-flowlines_ip_layers <- flowlines |> select(gnis_nm, gnis_id, slope, tot_da_sq_km = tt_d_s_)
+flowlines_ip_layers <- flowlines |> select(gnis_nm, gnis_id, nhdplusid = nhd_pl_, slope, tot_da_sq_km = tt_d_s_)
 ```
 
 ### Slope
@@ -94,11 +100,209 @@ ggplot() +
 
 ### Valley Bottom Width
 
-could use this workflow from habistat: <https://github.com/FlowWest/habistat/blob/main/data-raw/scripts/terrain-attributes.md#valley-bottom-width-via-slope-cutoff-method>
+Calculated using Valley Confinement methodology outlined in [South Fork Eel River Basin Geomorphic Classification](https://watermanagement.ucdavis.edu/download_file/view_inline/144) and implemented through [Habistat](https://github.com/FlowWest/habistat/blob/main/data-raw/scripts/terrain-attributes.md#valley-bottom-width-via-slope-cutoff-method). Code adapted to fit the needs of this project. 
+
+```{r}
+valley_bottom <- function(catchment, flowline, dem) {
+  dem |> 
+    st_crop(catchment) |> 
+    st_as_stars() |> 
+    starsExtra::slope() |>
+    mutate(valley_bottom = if_else(slope<units::set_units(atan(0.25)*180/pi,"degrees"), 1, NA)) |>
+    select(valley_bottom) |>
+    st_as_sf(merge=TRUE) |>
+    st_filter(st_zm(flowline)) 
+}
+
+valley_bottom_by_comid <- function(x, dem, catchment, flowlines) {
+  c <- catchments |> 
+    mutate(nhdplusid = as.character(nhdplusid)) |> 
+    filter(nhdplusid==x) |> 
+    st_transform(st_crs(dem))
+  f <- flowlines |> 
+    mutate(nhdplusid = as.character(nhdplusid)) |> 
+    filter(nhdplusid==x) |> 
+    st_transform(st_crs(dem))
+  valley_bottom(c, f, dem)
+}
+
+valley_width_naive <- function(geom_valley_bottom) {
+  geom_valley_bottom |> 
+    terra::vect() |> 
+    terra::width()
+}
+
+perpendicular_transect <- function(pair, transect_length) {
+  p1 <- st_coordinates(st_sfc(pair[[1]]))
+  p2 <- st_coordinates(st_sfc(pair[[2]]))
+  
+  x1 <- p1[1, "X"]
+  y1 <- p1[1, "Y"]
+  x2 <- p2[1, "X"]
+  y2 <- p2[1, "Y"]
+  
+  midpoint_x <- (x1 + x2) / 2
+  midpoint_y <- (y1 + y2) / 2
+  
+  orig_bearing <- atan2(y2 - y1, x2 - x1)
+  perp_bearing <- orig_bearing + pi / 2
+  
+  radius <- transect_length / 2
+  
+  perp_x1 <- midpoint_x + radius * cos(perp_bearing)
+  perp_y1 <- midpoint_y + radius * sin(perp_bearing)
+  perp_x2 <- midpoint_x - radius * cos(perp_bearing)
+  perp_y2 <- midpoint_y - radius * sin(perp_bearing)
+  
+  st_linestring(matrix(
+    c(perp_x1, perp_y1,
+      perp_x2, perp_y2),
+    ncol = 2,
+    byrow = TRUE
+  ))
+}
+
+perpendicular_transects <- function(ls, transect_length) {
+  if (inherits(ls, "sf")) {
+    crs_use <- st_crs(ls)
+    ls <- st_geometry(ls)
+  } else if (inherits(ls, "sfc")) {
+    crs_use <- st_crs(ls)
+  } else if (inherits(ls, "sfg")) {
+    crs_use <- NA
+    ls <- st_sfc(ls)
+  } else {
+    stop("ls must be sf, sfc, or sfg")
+  }
+  
+  coords <- st_coordinates(st_zm(ls))[, 1:2, drop = FALSE]
+  
+  if (nrow(coords) < 2) {
+    stop("Need at least 2 coordinates to build transects")
+  }
+  
+  point_pairs <- lapply(seq_len(nrow(coords) - 1), function(i) {
+    list(
+      st_point(coords[i, ]),
+      st_point(coords[i + 1, ])
+    )
+  })
+  
+  perp_lines <- lapply(point_pairs, function(pair) {
+    perpendicular_transect(pair, transect_length)
+  })
+  
+  st_sfc(perp_lines, crs = crs_use)
+}
+
+valley_width_via_transects <- function(geom_valley_bottom, flowline, max_width) {
+  transects <- perpendicular_transects(flowline, transect_length = max_width)
+  if("sfg" %in% class(geom_valley_bottom)) {
+    geom_valley_bottom <- st_sfc(geom_valley_bottom, crs=st_crs(transects))
+  }
+  clipped <- st_intersection(transects, geom_valley_bottom)
+  return(mean(st_length(clipped)))
+}
+
+```
+
+```{r}
+dem <- stars::read_stars("../../klamathAgData/data-raw/DEM/dem_z12_utm10.tif")
+catchments <- rivermile::nhd_catchments |> 
+  mutate(nhdplusid = as.character(nhdplusid)) |> 
+  st_transform(st_crs(dem))
+
+catch <- catchments |> 
+  filter(nhdplusid == '50000400080804') 
+flow <- flowlines_ip_layers |> 
+  mutate(nhdplusid = as.character(nhdplusid)) |> 
+  filter(nhdplusid == '50000400080804') |> 
+  st_transform(st_crs(dem))
+
+ggplot() + 
+  geom_sf(data=valley_bottom(catch, flow, dem)) +
+  geom_sf(data=st_zm(flow))
+
+valley_polygon <- valley_bottom(catch, flow, dem)
+valley_width_via_transects(valley_bottom(catch, flow, dem), flow, max_width=1000)
+
+ggplot() + 
+  geom_sf(data=catch) +
+  geom_sf(data=valley_polygon, fill="lightblue") +
+  geom_sf(data=flow, color="blue") +
+  geom_sf(data=perpendicular_transects(flow, transect_length=1000) |> st_intersection(valley_polygon), color="red") 
+
+```
+
+```{r}
+dem_crs <- st_crs(dem)
+
+safe_vb_width_simple <- purrr::possibly(
+  function(x) {
+    out <- valley_width_naive(x)
+    if (length(out) == 0 || is.nan(out)) NA_real_ else as.numeric(out)
+  },
+  otherwise = NA_real_
+)
+
+safe_vb_width_transect <- purrr::possibly(
+  function(a, b) {
+    out <- valley_width_via_transects(a, b, 1000)
+    if (length(out) == 0 || is.nan(out)) NA_real_ else as.numeric(out)
+  },
+  otherwise = NA_real_
+)
+
+vb <- flowlines_ip_layers |>
+  mutate(nhdplusid = as.character(nhdplusid)) |> 
+  filter(gnis_nm == "Scotch Creek") |> 
+  #filter(nhdplusid %in% c("50000400015484")) |>
+  mutate(flowline = map(
+    geometry,
+    ~ st_sfc(st_zm(.x), crs = st_crs(flowlines_ip_layers)) |>
+      st_transform(st_crs(dem)))) |> 
+  st_drop_geometry() |>
+  mutate(valley_bottom_geoms = map(
+    nhdplusid,
+    possibly(function(x) {
+      vb <- valley_bottom_by_comid(x, dem, flowlines = flowlines_ip_layers, catchment = catchments)
+      geom <- st_union(st_geometry(vb))
+      st_set_crs(geom, st_crs(dem))
+    },
+    otherwise = st_sfc(st_polygon(), crs = st_crs(dem))))) |>
+  mutate(
+    vb_width_simple = map_dbl(valley_bottom_geoms, safe_vb_width_simple),
+    vb_width_transect = map2_dbl(valley_bottom_geoms, flowline, safe_vb_width_transect)
+  ) |> 
+  select(nhdplusid, flowline, valley_bottom_geoms, vb_width_simple, vb_width_transect)
+
+vb |> glimpse()
+
+# Looks like there's a threshold catchment size where the valley bottom width does not work
+
+```
+```{r}
+flowlines_ip_layers_new <- flowlines_ip_layers |> 
+  mutate(nhdplusid = as.character(nhdplusid)) |> 
+  filter(gnis_nm == "Scotch Creek") |> 
+  left_join(vb |> 
+              select(-flowline, -valley_bottom_geoms)) |> glimpse()
+```
+
 
 ### Valley Width Index
 
 $V = (valley-floor-width)/(active-channel-width)$
+
+```{r}
+flowlines_ip_layers_all <- flowlines_ip_layers_new |> 
+  mutate(valley_width_index = vb_width_transect/bf_width_m)
+```
+
+```{r}
+ggplot() +
+  geom_histogram(data = flowlines_ip_layers_all, aes(x = valley_width_index))
+```
 
 ### Suitability Criteria
 
@@ -109,7 +313,7 @@ chinook_suit <- tibble(
   variable = c(
     rep("gradient_percent", 3),
     rep("valley_constraint", 3),
-    rep("discharge_m3s", 3)
+    rep("discharge_m3_s", 3)
   ),
   value = c(
     0, 3.7, 8,        
@@ -131,9 +335,77 @@ ggplot() +
 
 ```
 
+## Calculate Intrinsic Potential 
+
+```{r}
+make_suitability_fun <- function(df) {
+  df <- df |>
+    distinct(value, suitability) |>
+    arrange(value)
+  
+  x <- df$value
+  y <- df$suitability
+  
+  function(z) {
+    # return NA if input is NA
+    ifelse(
+      is.na(z),
+      NA_real_,
+      approx(
+        x = x,
+        y = y,
+        xout = z,
+        method = "linear",
+        rule = 2  # clamp to end values outside the range
+      )$y
+    )
+  }
+}
+
+suit_funs <- chinook_suit |>
+  group_split(variable) |>
+  set_names(chinook_suit |> distinct(variable) |> pull(variable)) |>
+  map(make_suitability_fun)
+
+# extract named functions
+s_grad <- suit_funs[["gradient_percent"]]
+s_valley <- suit_funs[["valley_constraint"]]
+s_q <- suit_funs[["discharge_m3_s"]]
+
+```
+
+
+```{r}
+ip <- flowlines_ip_layers_all |> 
+  mutate(slope = slope * 100) |> 
+  mutate(
+    suit_slope = s_grad(slope),
+    suit_valley = s_valley(valley_width_index),
+    suit_q = s_q(q_mean_est),
+    chinook_ip = (suit_slope * suit_valley * suit_q)^(1/3)
+  ) |> 
+  mutate(
+    chinook_ip_class = case_when(
+      is.na(chinook_ip) ~ NA_character_,
+      chinook_ip < 0.25 ~ "low",
+      chinook_ip < 0.5  ~ "moderate",
+      chinook_ip < 0.75 ~ "high",
+      TRUE ~ "very high"
+    )
+  )
+
+```
+
+```{r}
+ggplot() + 
+  geom_sf(data = ip, aes(color = chinook_ip_class), size = 2)
+
+```
+
 ```{r}
 knitr::knit_exit()
 ```
+
 
 ```{r}
 nhd_flowline <- readRDS(here::here("data-raw", "shapes", "nhd_flowline_hr.rds"))
@@ -195,17 +467,4 @@ flow_filter <- flow_clean |>
 #   filter(gnis_name %in% rivermile::all_klamath_rivers_line$river)
 ```
 
-```{r}
-ggplot() +
-  geom_sf(data = flow_filter) 
 
-
-# library(leaflet)
-# 
-# leaflet() |>
-#   addTiles() |>
-#   addPolylines(
-#     data = flow_filter |> st_transform(4326),
-#     popup = ~as.character(gnis_name)
-#   )
-```
