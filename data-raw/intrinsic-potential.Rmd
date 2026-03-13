@@ -40,7 +40,9 @@ ggplot() +
 ```
 
 ```{r}
-flowlines_ip_layers <- flowlines |> select(gnis_nm, gnis_id, nhdplusid = nhd_pl_, slope, tot_da_sq_km = tt_d_s_)
+flowlines_ip_layers <- flowlines |> 
+  select(gnis_nm, gnis_id, nhdplusid = nhd_pl_, slope, tot_da_sq_km = tt_d_s_) |> 
+  mutate(slope = slope * 100)
 ```
 
 ### Slope
@@ -63,21 +65,26 @@ ggplot() +
 
 ### Estimated Discharge
 
+There is likely a better way to do this with USGS gages however since the Chinook suitability is 1 for a discharge greater than zero, it doesn't seem worthwhile. 
+
+**double check source**
+source: https://ui.adsabs.harvard.edu/abs/2018AGUFMEP21D2294W/abstract#:~:text=Geomorphologists%20often%20use%20drainage%20area%20as%20a,exponent%20decreases%20as%20flood%20recurrence%20interval%20increases.
+
 ```{r}
-estimate_Q <- function(area_km2) {
-  Q <- 0.028 * area_km2^0.89
-  return(Q)
+estimate_discharge <- function(area_km2) {
+  discharge <- 0.028 * area_km2^0.89
+  return(discharge)
 }
 
 flowlines_ip_layers <- flowlines_ip_layers |> 
-  mutate(q_mean_est = estimate_Q(tot_da_sq_km))
+  mutate(discharge_mean_est = estimate_discharge(tot_da_sq_km))
 
 ```
 
 ```{r}
 ggplot() +
   geom_sf(data = rivermile::klamath_hucs |> st_union()) +
-  geom_sf(data = flowlines_ip_layers, aes(color = q_mean_est)) +
+  geom_sf(data = flowlines_ip_layers, aes(color = discharge_mean_est)) +
   theme_minimal()
 ```
 
@@ -86,7 +93,6 @@ ggplot() +
 Source: Bieger model $2.76 * DA^.399$
 
 ```{r}
-
 flowlines_ip_layers <- flowlines_ip_layers |> 
   mutate(bf_width_m = 2.76 * tot_da_sq_km^0.399)
 ```
@@ -211,7 +217,9 @@ dem <- stars::read_stars("../../klamathAgData/data-raw/DEM/dem_z12_utm10.tif")
 catchments <- rivermile::nhd_catchments |> 
   mutate(nhdplusid = as.character(nhdplusid)) |> 
   st_transform(st_crs(dem))
+```
 
+```{r}
 catch <- catchments |> 
   filter(nhdplusid == '50000400209014') 
 flow <- flowlines_ip_layers |> 
@@ -253,45 +261,91 @@ safe_vb_width_transect <- purrr::possibly(
   otherwise = NA_real_
 )
 
-vb <- flowlines_ip_layers |>
-  mutate(nhdplusid = as.character(nhdplusid)) |> 
-  filter(gnis_nm == "Clear Creek") |> 
-  #filter(nhdplusid %in% c("50000400015484")) |>
-  mutate(flowline = map(
-    geometry,
-    ~ st_sfc(st_zm(.x), crs = st_crs(flowlines_ip_layers)) |>
-      st_transform(st_crs(dem)))) |> 
-  st_drop_geometry() |>
-  mutate(valley_bottom_geoms = map(
-    nhdplusid,
-    possibly(function(x) {
-      vb <- valley_bottom_by_comid(x, dem, flowlines = flowlines_ip_layers, catchment = catchments)
-      geom <- st_union(st_geometry(vb))
-      st_set_crs(geom, st_crs(dem))
-    },
-    otherwise = st_sfc(st_polygon(), crs = st_crs(dem))))) |>
-  mutate(
-    vb_width_simple = map_dbl(valley_bottom_geoms, safe_vb_width_simple),
-    vb_width_transect = map2_dbl(valley_bottom_geoms, flowline, safe_vb_width_transect)
-  ) |> 
-  select(nhdplusid, flowline, valley_bottom_geoms, vb_width_simple, vb_width_transect)
+vb_fun <- function(data) {
+  data |> 
+    mutate(nhdplusid = as.character(nhdplusid)) |> 
+    #filter(nhdplusid %in% c("50000400015484")) |>
+    mutate(flowline = map(
+      geometry,
+      ~ st_sfc(st_zm(.x), crs = st_crs(flowlines_ip_layers)) |>
+        st_transform(st_crs(dem)))) |> 
+    st_drop_geometry() |>
+    mutate(valley_bottom_geoms = map(
+      nhdplusid,
+      possibly(function(x) {
+        vb <- valley_bottom_by_comid(x, dem, flowlines = flowlines_ip_layers, catchment = catchments)
+        geom <- st_union(st_geometry(vb))
+        st_set_crs(geom, st_crs(dem))
+      },
+      otherwise = st_sfc(st_polygon(), crs = st_crs(dem))))) |>
+    mutate(
+      vb_width_simple = map_dbl(valley_bottom_geoms, safe_vb_width_simple),
+      vb_width_transect = map2_dbl(valley_bottom_geoms, flowline, safe_vb_width_transect)
+    ) |> 
+    select(nhdplusid, flowline, valley_bottom_geoms, vb_width_simple, vb_width_transect) |>   glimpse()
+}
 
-vb |> glimpse()
+vb_1_500 <- flowlines_ip_layers |>
+  head(500) |> 
+  vb_fun()
 
-# Looks like there's a threshold catchment size where the valley bottom width does not work... or something...
+saveRDS(vb_1_500, here::here("data-raw","valley_bottom_width_1_500.rds"))
 
-saveRDS(vb, here::here("data-raw","valley_bottom_width.rds"))
+vb_501_1000 <- flowlines_ip_layers |>
+  slice(501:1000) |> 
+  vb_fun()
+
+saveRDS(vb_501_1000, here::here("data-raw","valley_bottom_width_501_1000.rds"))
+
+vb_1001_1500 <- flowlines_ip_layers |>
+  slice(1001:1500) |> 
+  vb_fun()
+
+saveRDS(vb_1001_1500, here::here("data-raw","valley_bottom_width_1001_1500.rds"))
+
+vb_1501_2000 <- flowlines_ip_layers |>
+  slice(1501:2000) |> 
+  vb_fun()
+
+saveRDS(vb_1501_2000, here::here("data-raw","valley_bottom_width_1501_2000.rds"))
+
+vb_2001_3000 <- flowlines_ip_layers |>
+  slice(2001:3000) |> 
+  vb_fun()
+
+saveRDS(vb_2001_3000, here::here("data-raw","valley_bottom_width_2001_3000.rds"))
+
+vb_3001_4000 <- flowlines_ip_layers |>
+  slice(3001:4000) |> 
+  vb_fun()
+
+saveRDS(vb_3001_4000, here::here("data-raw","valley_bottom_width_3001_4000.rds"))
+
+vb_4001_4236 <- flowlines_ip_layers |>
+  slice(4001:4326) |> 
+  vb_fun()
+
+saveRDS(vb_4001_4236, here::here("data-raw","valley_bottom_width_4001_4236.rds"))
 
 ```
 
 ```{r}
-vb <- read_rds(here::here("data-raw","valley_bottom_width.rds"))
+
+vb <- bind_rows(read_rds(here::here("data-raw","valley_bottom_width_4001_4236.rds")), 
+                read_rds(here::here("data-raw","valley_bottom_width_3001_4000.rds")),
+                read_rds(here::here("data-raw","valley_bottom_width_2001_3000.rds")),
+                read_rds(here::here("data-raw","valley_bottom_width_1501_2000.rds")),
+                read_rds(here::here("data-raw","valley_bottom_width_1001_1500.rds")),
+                read_rds(here::here("data-raw","valley_bottom_width_501_1000.rds")),
+                read_rds(here::here("data-raw","valley_bottom_width_1_500.rds")))
+
+
 ```
 
 ```{r}
 flowlines_ip_layers_new <- flowlines_ip_layers |> 
   mutate(nhdplusid = as.character(nhdplusid)) |> 
-  filter(gnis_nm == "Clear Creek") |> 
+  #filter(gnis_nm == "Clear Creek") |> 
   left_join(vb |> 
               select(-flowline, -valley_bottom_geoms)) |> 
   glimpse()
@@ -307,9 +361,10 @@ flowlines_ip_layers_all <- flowlines_ip_layers_new |>
   mutate(valley_width_index = vb_width_transect/bf_width_m)
 ```
 
-```{r echo=FALSE}
+```{r}
 ggplot() +
-  geom_histogram(data = flowlines_ip_layers_all, aes(x = valley_width_index))
+  geom_sf(data = flowlines_ip_layers_all, aes(color = valley_width_index), size = 2) + 
+  theme_minimal()
 ```
 
 ### Suitability Criteria
@@ -368,7 +423,7 @@ ip <- flowlines_ip_layers_all |>
   mutate(
     suit_slope = slope_fun(slope),
     suit_valley = valley_fun(valley_width_index),
-    suit_q = q_fun(q_mean_est),
+    suit_q = q_fun(discharge_mean_est),
     chinook_ip = (suit_slope * suit_valley * suit_q)^(1/3)
   ) |> 
   mutate(
@@ -388,6 +443,9 @@ ggplot() +
   geom_sf(data = ip, aes(color = chinook_ip_class), size = 2) +
   theme_minimal()
 
+ggplot() + 
+  geom_sf(data = ip, aes(color =chinook_ip ), size = 2) +
+  theme_minimal()
 ```
 
 ```{r}
