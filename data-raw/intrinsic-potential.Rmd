@@ -121,7 +121,7 @@ flowlines_ip_layers |> group_by(gnis_nm) |>
 
 ### Bankfull Width
 
-Source: Bieger model $2.76 * DA^.399$
+Source: [Bieger model](https://swat.tamu.edu/media/114657/bieger_etal_2015.pdf) $2.76 * DA^.399$
 
 ```{r}
 flowlines_ip_layers <- flowlines_ip_layers |> 
@@ -423,7 +423,7 @@ chinook_suit <- tibble(
   value = c(
     0,  2, 3.7, 8,
     1, 2.5, 4, 8,
-    0, 3, 100, 100
+    0, 1, 100, 100
   ),
   suitability = c(
     1.0, 0.45, 0.0, 0.0,
@@ -439,7 +439,9 @@ ggplot() +
 
 ```
 
-## Calculate Intrinsic Potential
+# IP Calculation Approach 1: 
+
+### for each NHD segment:
 
 ```{r include = FALSE}
 
@@ -479,7 +481,10 @@ ip <- flowlines_ip_layers_all |>
 ```
 
 ```{r echo=FALSE}
+library(ggrepel)
+
 ggplot() + 
+  geom_sf(data = klamath_hucs |> st_union()) + 
   geom_sf(data = ip, aes(color = chinook_ip_class), size = 2) +
   theme_minimal()
 
@@ -489,84 +494,355 @@ ggplot() +
 ```
 
 ```{r echo=FALSE}
+library(ggrepel)
+
+ip_plot <- ip |>
+  filter(!is.na(chinook_ip_class))
+
+river_labels <- ip_plot |>
+  filter(!is.na(gnis_nm), gnis_nm != "") |>
+  group_by(gnis_nm) |>
+  summarise(geometry = st_union(geometry), .groups = "drop") |>
+  st_point_on_surface()
+
+coords <- st_coordinates(river_labels)
+
+river_labels <- river_labels |>
+  mutate(
+    x = coords[, 1],
+    y = coords[, 2]
+  )
+
+ggplot() +
+  geom_sf(
+    data = ip_plot,
+    aes(color = chinook_ip_class),
+    linewidth = 1.5,
+    alpha = 0.9
+  ) +
+  geom_label_repel(
+    data = river_labels,
+    aes(x = x, y = y, label = gnis_nm),
+    size = 3,
+    label.size = 0.2,
+    fill = "white",
+    color = "black",
+    box.padding = 0.25,
+    point.padding = 0.2,
+    segment.color = "grey50",
+    min.segment.length = 0
+  ) +
+  scale_color_brewer(
+    palette = "Dark2",
+    na.translate = FALSE,
+    name = "Chinook IP class"
+  ) +
+  labs(
+    title = "Intrinsic Potential for Chinook Habitat",
+    subtitle = "Klamath River Basin") +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid = element_blank(),
+    axis.title = element_blank()
+  )
+
+```
+
+### For each river:
+
+```{r}
+ip_river <- flowlines_ip_layers_all |> 
+  group_by(gnis_nm) |> 
+  summarise(slope = mean(slope, na.rm = T),
+            valley_width_index = mean(valley_width_index, na.rm = T),
+            discharge_mean_est = mean(discharge_mean_est, na.rm = T)) |> 
+  mutate(
+    suit_slope = slope_fun(slope),
+    suit_valley = valley_fun(valley_width_index),
+    suit_q = q_fun(discharge_mean_est),
+    chinook_ip = (suit_slope * suit_valley * suit_q)^(1/3)
+  ) |> 
+  mutate(
+    chinook_ip_class = case_when(
+      is.na(chinook_ip) ~ NA_character_,
+      chinook_ip < 0.25 ~ "low",
+      chinook_ip < 0.5  ~ "moderate",
+      chinook_ip < 0.75 ~ "high",
+      TRUE ~ "very high"
+    )
+  )
+
+```
+
+```{r echo=FALSE}
+ggplot() + 
+  geom_sf(data = ip_river, aes(color = chinook_ip_class), size = 2) +
+  theme_minimal()
+
+ggplot() + 
+  geom_sf(data = ip_river, aes(color =chinook_ip ), size = 2) +
+  theme_minimal()
+```
+
+```{r echo=FALSE}
 ip |> 
   group_by(gnis_nm) |> 
-  summarise(mean_ip = mean(chinook_ip, na.rm = T),
-            min_ip = min(chinook_ip, na.rm = T),
-            max_ip = max(chinook_ip, na.rm = T)) |> 
+  summarise(mean_ip = round(mean(chinook_ip, na.rm = T), 2),
+            min_ip = round(min(chinook_ip, na.rm = T), 2),
+            max_ip = round(max(chinook_ip, na.rm = T), 2)) |> 
   st_drop_geometry() |> 
   knitr::kable()
 
 ```
 
-## Data Questions
+### Data Questions
 
-1.  How do we want the final dataset to be structured? Is it reasonable to summarize by reach?
+1.  *How do we want the final dataset to be structured? Is it reasonable to summarize by reach?*
 
-2.  Do the values seem reasonable? It seems to be heavily driven by slope and some by valley constraint
+2.  *Do the values seem reasonable? It seems to be heavily driven by slope and some by valley constraint*
 
-3.  Are there any other datasets that would be beneficial to include?
+3.  *Are there any other datasets that would be beneficial to include?*
 
-```{r}
-knitr::knit_exit()
+# IP Calculation Approach 2: 
+
+### A weight based approach to Intrinsic Potential:
+
+Intrinsic Potential (IP) modeling scores every stream reach in the network based on four physical channel attributes — gradient, valley confinement, drainage area, and bankfull width — to identify reaches most likely to support fall Chinook salmon spawning. Thresholds for each variable are drawn from published literature and combined into a weighted score, classifying reaches from Very Low to Very High potential. A key feature of the approach is that all reaches are evaluated equally regardless of survey coverage, treating the absence of fish observations as a gap in knowledge rather than evidence of absence. Variable thresholds and weights represent the best available starting point from the literature, and we welcome local expertise to help refine them for this basin. We intend to validate IP classifications using fish presence data and spawning gravel surveys, though that dataset is not yet available.
+
+![](images/clipboard-442348924.png)
+
+**Spawning Gravel**
+
+RES did spawning gravel surveys for the reservoir footprint and some tributaries. This data could be useful in further refinement of the IP calculation.
+
+source: [spawning gravel survey data](https://klamath-data-management-platform-klamath.hub.arcgis.com/maps/92cad013db7c445f87194f09e8fcc71e):
+
+```{r echo=FALSE}
+spawning_gravel <- sf::read_sf(here::here("data-raw", "shapes", "Spawning_Habitat_Patch", "Spawning_Habitat_Patch.shp"))
+
+spawning_gravel |> 
+  st_drop_geometry() |> 
+  janitor::clean_names() |> 
+  group_by(survey_reac) |> 
+  summarise(total_patch_size_c = sum(patch_size_c, na.rm = T)) |> 
+  knitr::kable()
 ```
 
+### Data Exploration
+
+Look at the distribution of each of the layers used to calculate IP
+
 ```{r}
-nhd_flowline <- readRDS(here::here("data-raw", "shapes", "nhd_flowline_hr.rds"))
+ggplot(flowlines_ip_layers_all |> 
+         filter(slope * 100 < 20)) +
+  geom_boxplot(aes(x = gnis_nm, y = slope * 100)) +
+  coord_flip() +
+  labs(x = NULL, y = "Slope (%)") +
+  theme_minimal()
 
-flowlines <- nhd_flowline |>
-  st_set_geometry("shape") |> 
-  st_intersection(klamath_hucs |> st_union())
+ggplot(flowlines_ip_layers_all) +
+  geom_boxplot(aes(x = gnis_nm, y = tot_da_sq_km)) +
+  coord_flip() +
+  labs(x = NULL, y = "Total Drainage Area (sq km)") +
+  theme_minimal()
 
-names(flowlines)[names(flowlines) == "shape"] <- "geometry"
-st_geometry(flowlines) <- "geometry"
+ggplot(flowlines_ip_layers_all) +
+  geom_boxplot(aes(x = gnis_nm, y = valley_width_index)) +
+  coord_flip() +
+  labs(x = NULL, y = "Valley Width Index") +
+  theme_minimal()
+
+ggplot(flowlines_ip_layers_all) +
+  geom_boxplot(aes(x = gnis_nm, y = bf_width_m)) +
+  coord_flip() +
+  labs(x = NULL, y = "Estimated Bankfull Width (m)") +
+  theme_minimal()
+
+ggplot(spawning_gravel) +
+  geom_boxplot(aes(SurveyReac, y = PatchSizeC)) +
+  coord_flip() +
+  theme_minimal()
+
 ```
 
+```{r eval=FALSE, include=FALSE}
+fish_presence <- tribble(
+  ~"year", ~"location", ~"fish_presence", ~"reach_name",
+  2024, "Klamath River", "yes", "former iron gate dam",
+  2025, "Klamath River", "yes", "keno dam to caldera rapid",
+  2025, "Klamath River", "yes", "keno dam to caldera rapid",
+  2025, "Spencer Creek", "yes", "spencer creek",
+  2025, "Link River", "yes", "link river dam fish ladder",
+  2025, "Klamath River", "yes", "keno dam fish ladder"
+)
+
+```
+
+### Literature based thresholds for chinook spawning
+
+Sources: Burnett et al. 2007, Busch et al. 2013, Berman & Quinn 1991, Connor et al. 2015
+
+**Slope (gradient as %):**
+
+-   High: \<= 2% (optimal spawning gradient)
+
+-   Medium: \> 2% to 4% (marginal but usable)
+
+-   Low: \> 4% (too steep for most spawning)
+
+**Drainage area (sq km):**
+
+-   High: \>= 100 km2 (sufficient flow for adult passage & spawning)
+
+-   Medium: 50-100 km2 (marginal flow)
+
+-   Low: \< 50 km2 (likely too small)
+
+**Valley Width Index (vb_width / bf_width — confinement proxy):**
+
+-   High: \>= 2 (unconfined, gravel retention favorable)
+
+-   Medium: 1 to 2 (moderately confined)
+
+-   Low: \< 1 (confined, poor gravel retention)
+
+**Bankfull Width (bf_width_m):**
+
+-   High: \>= 20 m (large enough for Chinook spawning)
+
+-   Medium: 10-20 m (marginal)
+
+-   Low: \< 10 m (likely too narrow)
+
+*Weights reflect relative importance to fall Chinook spawning and sum to 1.0. Adjust based on expert input if needed.*
+
 ```{r}
-flow_net <- flowlines 
-seed_comid <- 50000400214915
-seed_row <- flow_net |>
-  st_drop_geometry() |>
-  filter(comid == seed_comid)
-
-edges <- flow_net |>
-  st_drop_geometry() |>
-  select(comid, from_node, to_node) |> 
-  filter(!is.na(to_node))
-
-g <- graph_from_data_frame(
-  d = edges |> select(from_node, to_node),
-  directed = TRUE
+weights <- list(
+  slope  = 0.35,   # most limiting factor
+  da     = 0.25,   # flow availability
+  conf   = 0.25,   # gravel retention
+  width  = 0.15    # channel size
 )
 
-comp <- components(g, mode = "weak")
+score_slope <- function(s) {
+  case_when(
+    s <= 2          ~ 3,
+    s > 2 & s <= 4  ~ 2,
+    s > 4           ~ 1,
+    TRUE            ~ NA_real_
+  )
+}
 
-node_membership <- tibble(
-  node = names(comp$membership),
-  component_id = as.integer(comp$membership)
-)
+score_da <- function(da) {
+  case_when(
+    da >= 100              ~ 3,
+    da >= 50 & da < 100    ~ 2,
+    da < 50                ~ 1,
+    TRUE                   ~ NA_real_
+  )
+}
 
-flow_comp <- flow_net |>
-  left_join(
-    node_membership |> 
-      rename(from_node = node) |> 
-      mutate(from_node = as.numeric(from_node)),
-    by = "from_node"
+score_confinement <- function(vwi) {
+  case_when(
+    vwi >= 2               ~ 3,
+    vwi >= 1 & vwi < 2     ~ 2,
+    vwi < 1                ~ 1,
+    TRUE                   ~ NA_real_   # NAs flagged below
+  )
+}
+
+score_width <- function(w) {
+  case_when(
+    w >= 20                ~ 3,
+    w >= 10 & w < 20       ~ 2,
+    w < 10                 ~ 1,
+    TRUE                   ~ NA_real_
+  )
+}
+
+```
+
+```{r echo=FALSE}
+
+df_ip <- flowlines_ip_layers_all |> 
+  mutate(
+    s_slope  = score_slope(slope),
+    s_da     = score_da(tot_da_sq_km),
+    s_conf   = score_confinement(valley_width_index),
+    s_width  = score_width(bf_width_m),
+    ip_score = (s_slope  * weights$slope) +
+      (s_da     * weights$da)    +
+      (s_conf   * weights$conf)  +
+      (s_width  * weights$width),
+    conf_uncertain = is.na(valley_width_index),
+    ip_score = if_else(
+      conf_uncertain,
+      (s_slope * (weights$slope / (1 - weights$conf))) +
+        (s_da    * (weights$da    / (1 - weights$conf))) +
+        (s_width * (weights$width / (1 - weights$conf))),
+      ip_score
+    )
   )
 
-seed_component <- flow_comp |>
-  st_drop_geometry() |>
-  filter(comid == seed_comid) |>
-  pull(component_id)
+# currently split evenly, could break into natural breaks or other 
+df_ip <- df_ip |> 
+  mutate(
+    ip_class = case_when(
+      ip_score >= 2.5              ~ "Very High",
+      ip_score >= 2.0 & ip_score < 2.5 ~ "High",
+      ip_score >= 1.5 & ip_score < 2.0 ~ "Moderate",
+      ip_score <  1.5              ~ "Low",
+      TRUE                         ~ NA_character_
+    ),
+    ip_class = factor(ip_class, 
+                      levels = c("Very High", "High", "Moderate", "Low"))
+  )
 
-flow_clean <- flow_comp |>
-  filter(component_id == seed_component)
+output_table <- df_ip  |> 
+  st_drop_geometry() |>    
+  group_by(gnis_nm) |> 
+  summarise(min_ip = min(ip_score),
+            max_ip = max(ip_score),
+            mean_ip = mean(ip_score)) |> 
+  arrange(desc(mean_ip)) 
 
-flow_filter <- flow_clean |> 
-  filter(stream_orde >= 5) |> 
-  filter(tot_da_sq_km >= 1)
+knitr::kable(output_table)
 
-# flowlines_clean <- flow_clean |> 
-#   select(comid, gnis_name, lengthkm, stream_leve, stream_orde, tot_da_sq_km, slope, geometry) |> 
-#   filter(gnis_name %in% rivermile::all_klamath_rivers_line$river)
+```
+
+### Map summary of IP
+
+```{r echo=FALSE}
+
+river_labels <- df_ip |>
+  filter(!is.na(gnis_nm), gnis_nm != "") |>
+  group_by(gnis_nm) |>
+  summarise(geometry = st_union(geometry), .groups = "drop") |>
+  st_point_on_surface()
+
+coords <- st_coordinates(river_labels)
+
+river_labels <- river_labels |>
+  mutate(
+    x = coords[, 1],
+    y = coords[, 2]
+  )
+
+ip_colors <- c(
+  "Very High" = "#1a6b3c",
+  "High"      = "#5aab61",
+  "Moderate"  = "#f0c93a",
+  "Low"       = "#d94f3d"
+)
+
+ggplot() +
+  geom_sf(data = df_ip, aes(color = ip_class), linewidth = 0.8) +
+  scale_color_manual(values = ip_colors, name = "IP Class") +
+  labs(
+    title    = "DRAFT - Fall Chinook Intrinsic Potential",
+    caption  = "Thresholds from literature — not calibrated to local fish data"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "right")
+
 ```
