@@ -609,7 +609,7 @@ ip |>
 
 Intrinsic Potential (IP) modeling scores every stream reach in the network based on four physical channel attributes — gradient, valley confinement, drainage area, and bankfull width — to identify reaches most likely to support fall Chinook salmon spawning. Thresholds for each variable are drawn from published literature and combined into a weighted score, classifying reaches from Very Low to Very High potential. A key feature of the approach is that all reaches are evaluated equally regardless of survey coverage, treating the absence of fish observations as a gap in knowledge rather than evidence of absence. Variable thresholds and weights represent the best available starting point from the literature, and we welcome local expertise to help refine them for this basin. We intend to validate IP classifications using fish presence data and spawning gravel surveys, though that dataset is not yet available.
 
-![](images/clipboard-442348924.png)
+![](images/clipboard-2925770690.png)
 
 **Spawning Gravel**
 
@@ -680,9 +680,11 @@ fish_presence <- tribble(
 
 ### Literature based thresholds for chinook spawning
 
-Sources: Burnett et al. 2007, Busch et al. 2013, Berman & Quinn 1991, Connor et al. 2015
+Sources: [Burnett et al. 2007](https://www.fs.usda.gov/pnw/pubs/journals/pnw_2007_burnett001.pdf), [Busch et al. 2013](https://www.researchgate.net/figure/Curves-used-by-Busch-et-al-NOAA-Northwest-Fisheries-Science-Center-pers-comm-in_fig4_51529363), [Connor et al. 2015](https://www.skagitwatershed.org/wp-content/uploads/Tier-2-Tributary-composite-2015-02-04_final-draft-2.pdf), [Beechie et al. 2006](https://www.sciencedirect.com/science/article/abs/pii/S0169555X0600033X)
 
 **Slope (gradient as %):**
+
+*Busch & Agrawal agree on 0-2 as best; Connor et al's 2-4 peak is likely system specific; \>7 is universally unsuitable*
 
 -   High: \<= 2% (optimal spawning gradient)
 
@@ -690,38 +692,44 @@ Sources: Burnett et al. 2007, Busch et al. 2013, Berman & Quinn 1991, Connor et 
 
 -   Low: \> 4% (too steep for most spawning)
 
-**Drainage area (sq km):**
+**Annual Discharge (m3/s):**
 
--   High: \>= 100 km2 (sufficient flow for adult passage & spawning)
+*estimated using the power law and suitability from Agrawal et al.*
 
--   Medium: 50-100 km2 (marginal flow)
+-   High: \>= 3 (sufficient flow for adult passage & spawning)
 
--   Low: \< 50 km2 (likely too small)
+-   Medium: 1-3 (marginal flow)
+
+-   Low: \<1 (likely too small)
 
 **Valley Width Index (vb_width / bf_width — confinement proxy):**
 
--   High: \>= 2 (unconfined, gravel retention favorable)
+*Busch and Agrawal combined; Busch's \> 9 "good" and Agrawal's \> 4 "good" split the difference at \> 4 as high*
 
--   Medium: 1 to 2 (moderately confined)
+-   High: \>4 (unconfined, gravel retention favorable)
+
+-   Medium: 1 to 4 (moderately confined)
 
 -   Low: \< 1 (confined, poor gravel retention)
 
 **Bankfull Width (bf_width_m):**
 
--   High: \>= 20 m (large enough for Chinook spawning)
+*Busch upper limit of 20 m and Connor's 30–80 ft (\~9–24 m) are broadly consistent; Busch's \> 4 m lower bound aligns with Connor's \< 10 ft bad category*
 
--   Medium: 10-20 m (marginal)
+-   High: \>24 m (large enough for Chinook spawning)
 
--   Low: \< 10 m (likely too narrow)
+-   Medium: 9-24 m (marginal)
 
-*Weights reflect relative importance to fall Chinook spawning and sum to 1.0. Adjust based on expert input if needed.*
+-   Low: \< 9 m (likely too narrow)
+
+*Weights reflect relative importance to fall Chinook spawning and sum to 1.0. Adjust based on expert input if needed. Began with all weights equal.*
 
 ```{r}
 weights <- list(
-  slope  = 0.35,   # most limiting factor
-  da     = 0.25,   # flow availability
+  slope  = 0.25,   # most limiting factor
+  q     = 0.25,   # flow availability
   conf   = 0.25,   # gravel retention
-  width  = 0.15    # channel size
+  width  = 0.25    # channel size
 )
 
 score_slope <- function(s) {
@@ -733,19 +741,19 @@ score_slope <- function(s) {
   )
 }
 
-score_da <- function(da) {
+score_discharge <- function(q) {
   case_when(
-    da >= 100              ~ 3,
-    da >= 50 & da < 100    ~ 2,
-    da < 50                ~ 1,
-    TRUE                   ~ NA_real_
+    q >  3             ~ 3,   # good — sufficient for adult passage & spawning
+    q >= 1 & q <= 3    ~ 2,   # okay — marginal flow
+    q <  1             ~ 1,   # bad  — likely insufficient
+    TRUE               ~ NA_real_
   )
 }
 
 score_confinement <- function(vwi) {
   case_when(
-    vwi >= 2               ~ 3,
-    vwi >= 1 & vwi < 2     ~ 2,
+    vwi >= 4               ~ 3,
+    vwi >= 1 & vwi < 4     ~ 2,
     vwi < 1                ~ 1,
     TRUE                   ~ NA_real_   # NAs flagged below
   )
@@ -753,9 +761,9 @@ score_confinement <- function(vwi) {
 
 score_width <- function(w) {
   case_when(
-    w >= 20                ~ 3,
-    w >= 10 & w < 20       ~ 2,
-    w < 10                 ~ 1,
+    w >= 24                ~ 3,
+    w >= 9 & w < 24       ~ 2,
+    w < 9                 ~ 1,
     TRUE                   ~ NA_real_
   )
 }
@@ -767,36 +775,56 @@ score_width <- function(w) {
 df_ip <- flowlines_ip_layers_all |> 
   mutate(
     s_slope  = score_slope(slope),
-    s_da     = score_da(tot_da_sq_km),
+    s_q     = score_discharge(discharge_mean_est),
     s_conf   = score_confinement(valley_width_index),
     s_width  = score_width(bf_width_m),
     ip_score = (s_slope  * weights$slope) +
-      (s_da     * weights$da)    +
+      (s_q     * weights$q)    +
       (s_conf   * weights$conf)  +
       (s_width  * weights$width),
     conf_uncertain = is.na(valley_width_index),
     ip_score = if_else(
       conf_uncertain,
       (s_slope * (weights$slope / (1 - weights$conf))) +
-        (s_da    * (weights$da    / (1 - weights$conf))) +
+        (s_q    * (weights$q    / (1 - weights$conf))) +
         (s_width * (weights$width / (1 - weights$conf))),
       ip_score
     )
   )
 
-# currently split evenly, could break into natural breaks or other 
-df_ip <- df_ip |> 
+library(classInt)
+
+breaks_jenks <- classIntervals(
+  df_ip$ip_score,
+  n     = 4,
+  style = "jenks"
+)$brks  # returns n+1 break values (min to max)
+
+df_ip <- df_ip %>%
   mutate(
-    ip_class = case_when(
-      ip_score >= 2.5              ~ "Very High",
-      ip_score >= 2.0 & ip_score < 2.5 ~ "High",
-      ip_score >= 1.5 & ip_score < 2.0 ~ "Moderate",
-      ip_score <  1.5              ~ "Low",
-      TRUE                         ~ NA_character_
+    ip_class = cut(
+      ip_score,
+      breaks         = breaks_jenks,
+      labels         = c("Low", "Moderate", "High", "Very High"),
+      include.lowest = TRUE
     ),
-    ip_class = factor(ip_class, 
+    ip_class = factor(ip_class,
                       levels = c("Very High", "High", "Moderate", "Low"))
   )
+
+# currently split evenly, could break into natural breaks or other 
+# df_ip <- df_ip |> 
+#   mutate(
+#     ip_class = case_when(
+#       ip_score >= 2.5              ~ "Very High",
+#       ip_score >= 2.0 & ip_score < 2.5 ~ "High",
+#       ip_score >= 1.5 & ip_score < 2.0 ~ "Moderate",
+#       ip_score <  1.5              ~ "Low",
+#       TRUE                         ~ NA_character_
+#     ),
+#     ip_class = factor(ip_class, 
+#                       levels = c("Very High", "High", "Moderate", "Low"))
+#   )
 
 output_table <- df_ip  |> 
   st_drop_geometry() |>    
@@ -806,7 +834,7 @@ output_table <- df_ip  |>
             mean_ip = mean(ip_score)) |> 
   arrange(desc(mean_ip)) 
 
-knitr::kable(output_table)
+knitr::kable(output_table, digits = 2)
 
 ```
 
