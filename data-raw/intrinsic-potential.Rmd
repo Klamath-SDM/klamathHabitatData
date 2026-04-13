@@ -439,7 +439,7 @@ ggplot() +
 
 ```
 
-# IP Calculation Approach 1: 
+# IP Calculation Approach 1:
 
 ### for each NHD segment:
 
@@ -603,13 +603,11 @@ ip |>
 
 3.  *Are there any other datasets that would be beneficial to include?*
 
-# IP Calculation Approach 2: 
+# IP Calculation Approach 2:
 
-### A weight based approach to Intrinsic Potential:
+### Reach-scale and watershed-scale IP following Bjorkstedt et al. (2005):
 
-Intrinsic Potential (IP) modeling scores every stream reach in the network based on four physical channel attributes — gradient, valley confinement, drainage area, and bankfull width — to identify reaches most likely to support fall Chinook salmon spawning. Thresholds for each variable are drawn from published literature and combined into a weighted score, classifying reaches from Very Low to Very High potential. A key feature of the approach is that all reaches are evaluated equally regardless of survey coverage, treating the absence of fish observations as a gap in knowledge rather than evidence of absence. Variable thresholds and weights represent the best available starting point from the literature, and we welcome local expertise to help refine them for this basin. We intend to validate IP classifications using fish presence data and spawning gravel surveys, though that dataset is not yet available.
-
-![](images/clipboard-2925770690.png)
+Intrinsic Potential (IP) modeling scores every stream reach in the network based on three physical channel attributes — gradient, discharge, and valley confinement — to identify reaches most likely to support fall Chinook salmon spawning (Bjorkstedt, E.P., L.W. Spence, J.C. Garza, C. Michel, D. Lreconard, N. Bill, J. Quinn, and P. Sonntag. 2005. An analysis of salmonid population viability in California. Report to the California Department of Fish and Game. Sacramento, CA). At the reach scale, the three suitability scores are combined as a geometric mean (IP_reach), which gives the model the structure of a limiting-factors analysis: a very low suitability on any single variable greatly reduces or eliminates the probability of suitable habitat, regardless of how favorable the other two variables are. At the watershed scale, IP is summarized as IP-km — the sum of each reach's length (in km) weighted by its IP_reach score — which describes a watershed in terms of its expected equivalent length of continuous high-quality habitat. A key feature of the approach is that all reaches are evaluated equally regardless of survey coverage, treating the absence of fish observations as a gap in knowledge rather than evidence of absence. Thresholds represent the best available starting point from the literature, and we welcome local expertise to help refine them for this basin.
 
 **Spawning Gravel**
 
@@ -678,93 +676,68 @@ fish_presence <- tribble(
 
 ```
 
-### Literature based thresholds for chinook spawning
+### Literature based suitability thresholds for chinook spawning
 
-Sources: [Burnett et al. 2007](https://www.fs.usda.gov/pnw/pubs/journals/pnw_2007_burnett001.pdf), [Busch et al. 2013](https://www.researchgate.net/figure/Curves-used-by-Busch-et-al-NOAA-Northwest-Fisheries-Science-Center-pers-comm-in_fig4_51529363), [Connor et al. 2015](https://www.skagitwatershed.org/wp-content/uploads/Tier-2-Tributary-composite-2015-02-04_final-draft-2.pdf), [Beechie et al. 2006](https://www.sciencedirect.com/science/article/abs/pii/S0169555X0600033X)
+Sources: [Bjorkstedt et al. 2005](https://www.fs.usda.gov/pnw/pubs/journals/pnw_2005_agrawal001.pdf), [Burnett et al. 2007](https://www.fs.usda.gov/pnw/pubs/journals/pnw_2007_burnett001.pdf), [Busch et al. 2013](https://www.researchgate.net/figure/Curves-used-by-Busch-et-al-NOAA-Northwest-Fisheries-Science-Center-pers-comm-in_fig4_51529363), [Connor et al. 2015](https://www.skagitwatershed.org/wp-content/uploads/Tier-2-Tributary-composite-2015-02-04_final-draft-2.pdf), [Beechie et al. 2006](https://www.sciencedirect.com/science/article/abs/pii/S0169555X0600033X)
+
+Suitability scores are expressed on a 0–1 scale, where 1.0 = fully suitable and 0.0 = unsuitable.
 
 **Slope (gradient as %):**
 
 *Busch & Agrawal agree on 0-2 as best; Connor et al's 2-4 peak is likely system specific; \>7 is universally unsuitable*
 
--   High: \<= 2% (optimal spawning gradient)
+-   1.0: \<= 2% (optimal spawning gradient)
 
--   Medium: \> 2% to 4% (marginal but usable)
+-   0.45: \> 2% to 4% (marginal but usable)
 
--   Low: \> 4% (too steep for most spawning)
+-   0.0: \> 4% (too steep for most spawning)
 
 **Annual Discharge (m3/s):**
 
 *estimated using the power law and suitability from Agrawal et al.*
 
--   High: \>= 3 (sufficient flow for adult passage & spawning)
+-   1.0: \>= 3 (sufficient flow for adult passage & spawning)
 
--   Medium: 1-3 (marginal flow)
+-   0.45: 1–3 (marginal flow)
 
--   Low: \<1 (likely too small)
+-   0.0: \<1 (likely too small)
 
 **Valley Width Index (vb_width / bf_width — confinement proxy):**
 
 *Busch and Agrawal combined; Busch's \> 9 "good" and Agrawal's \> 4 "good" split the difference at \> 4 as high*
 
--   High: \>4 (unconfined, gravel retention favorable)
+-   1.0: \>4 (unconfined, gravel retention favorable)
 
--   Medium: 1 to 4 (moderately confined)
+-   0.45: 1 to 4 (moderately confined)
 
--   Low: \< 1 (confined, poor gravel retention)
-
-**Bankfull Width (bf_width_m):**
-
-*Busch upper limit of 20 m and Connor's 30–80 ft (\~9–24 m) are broadly consistent; Busch's \> 4 m lower bound aligns with Connor's \< 10 ft bad category*
-
--   High: \>24 m (large enough for Chinook spawning)
-
--   Medium: 9-24 m (marginal)
-
--   Low: \< 9 m (likely too narrow)
-
-*Weights reflect relative importance to fall Chinook spawning and sum to 1.0. Adjust based on expert input if needed. Began with all weights equal.*
+-   0.0: \< 1 (confined, poor gravel retention)
 
 ```{r}
-weights <- list(
-  slope  = 0.25,   # most limiting factor
-  q     = 0.25,   # flow availability
-  conf   = 0.25,   # gravel retention
-  width  = 0.25    # channel size
-)
-
-score_slope <- function(s) {
+# Suitability functions return 0-1 values following Bjorkstedt et al. (2005)
+suit_gradient <- function(s) {
   case_when(
-    s <= 2          ~ 3,
-    s > 2 & s <= 4  ~ 2,
-    s > 4           ~ 1,
+    s <= 2          ~ 1.0,   # optimal spawning gradient
+    s > 2 & s <= 4  ~ 0.45,  # marginal but usable
+    s > 4           ~ 0.0,   # too steep for most spawning
     TRUE            ~ NA_real_
   )
 }
 
-score_discharge <- function(q) {
+suit_discharge <- function(q) {
   case_when(
-    q >  3             ~ 3,   # good — sufficient for adult passage & spawning
-    q >= 1 & q <= 3    ~ 2,   # okay — marginal flow
-    q <  1             ~ 1,   # bad  — likely insufficient
-    TRUE               ~ NA_real_
+    q >= 3          ~ 1.0,   # sufficient for adult passage and spawning
+    q >= 1          ~ 0.45,  # marginal flow
+    q <  1          ~ 0.0,   # likely insufficient
+    TRUE            ~ NA_real_
   )
 }
 
-score_confinement <- function(vwi) {
+suit_confinement <- function(vwi) {
   case_when(
-    vwi >= 4               ~ 3,
-    vwi >= 1 & vwi < 4     ~ 2,
-    vwi < 1                ~ 1,
-    TRUE                   ~ NA_real_   # NAs flagged below
-  )
-}
-
-score_width <- function(w) {
-  case_when(
-    w >= 24                ~ 3,
-    w >= 9 & w < 24       ~ 2,
-    w < 9                 ~ 1,
-    TRUE                   ~ NA_real_
+    is.na(vwi)  ~ NA_real_,
+    vwi >= 4    ~ 1.0,   # unconfined; favorable gravel retention
+    vwi >= 1    ~ 0.45,  # moderately confined
+    vwi <  1    ~ 0.0    # confined; poor gravel retention
   )
 }
 
@@ -772,69 +745,62 @@ score_width <- function(w) {
 
 ```{r echo=FALSE}
 
-df_ip <- flowlines_ip_layers_all |> 
+# IP_reach = geometric mean of three suitability scores (Bjorkstedt et al. 2005)
+# IP-km   = sum(reach_length_km * IP_reach) — expected equivalent length of
+#           continuous high-quality habitat at the watershed scale.
+# Note: all reaches are treated as accessible to anadromy pending a dedicated
+# barrier/passage layer; filter to accessible reaches when that layer is available.
+
+df_ip <- flowlines_ip_layers_all |>
   mutate(
-    s_slope  = score_slope(slope),
-    s_q     = score_discharge(discharge_mean_est),
-    s_conf   = score_confinement(valley_width_index),
-    s_width  = score_width(bf_width_m),
-    ip_score = (s_slope  * weights$slope) +
-      (s_q     * weights$q)    +
-      (s_conf   * weights$conf)  +
-      (s_width  * weights$width),
-    conf_uncertain = is.na(valley_width_index),
-    ip_score = if_else(
-      conf_uncertain,
-      (s_slope * (weights$slope / (1 - weights$conf))) +
-        (s_q    * (weights$q    / (1 - weights$conf))) +
-        (s_width * (weights$width / (1 - weights$conf))),
-      ip_score
-    )
+    reach_length_km = as.numeric(st_length(st_transform(geometry, 26910))) / 1000,
+    suit_grad  = suit_gradient(slope),
+    suit_q     = suit_discharge(discharge_mean_est),
+    suit_conf  = suit_confinement(valley_width_index),
+    IP_reach   = (suit_grad * suit_q * suit_conf)^(1/3)
   )
 
 library(classInt)
 
+# Many reaches have IP_reach = 0 (geometric mean collapses when any suitability = 0),
+# so Jenks on the full distribution produces duplicate breaks at 0.
+# Instead: hard-classify zeros as Low, then apply Jenks to non-zero reaches only
+# to find the Moderate / High / Very High boundaries.
 breaks_jenks <- classIntervals(
-  df_ip$ip_score,
-  n     = 4,
+  df_ip$IP_reach[!is.na(df_ip$IP_reach) & df_ip$IP_reach > 0],
+  n     = 3,
   style = "jenks"
-)$brks  # returns n+1 break values (min to max)
+)$brks
 
-df_ip <- df_ip %>%
+df_ip <- df_ip |>
   mutate(
-    ip_class = cut(
-      ip_score,
-      breaks         = breaks_jenks,
-      labels         = c("Low", "Moderate", "High", "Very High"),
-      include.lowest = TRUE
+    ip_class = case_when(
+      is.na(IP_reach)             ~ NA_character_,
+      IP_reach == 0               ~ "Low",
+      IP_reach <= breaks_jenks[2] ~ "Moderate",
+      IP_reach <= breaks_jenks[3] ~ "High",
+      TRUE                        ~ "Very High"
     ),
-    ip_class = factor(ip_class,
-                      levels = c("Very High", "High", "Moderate", "Low"))
+    ip_class = factor(ip_class, levels = c("Very High", "High", "Moderate", "Low"))
   )
 
-# currently split evenly, could break into natural breaks or other 
-# df_ip <- df_ip |> 
-#   mutate(
-#     ip_class = case_when(
-#       ip_score >= 2.5              ~ "Very High",
-#       ip_score >= 2.0 & ip_score < 2.5 ~ "High",
-#       ip_score >= 1.5 & ip_score < 2.0 ~ "Moderate",
-#       ip_score <  1.5              ~ "Low",
-#       TRUE                         ~ NA_character_
-#     ),
-#     ip_class = factor(ip_class, 
-#                       levels = c("Very High", "High", "Moderate", "Low"))
-#   )
+# IP-km aggregated to stream
+ip_km_table <- df_ip |>
+  filter(!is.na(IP_reach)) |>
+  st_drop_geometry() |>
+  group_by(gnis_nm) |>
+  summarise(
+    IP_km           = sum(reach_length_km * IP_reach, na.rm = TRUE),
+    total_length_km = sum(reach_length_km, na.rm = TRUE),
+    mean_IP_reach   = mean(IP_reach, na.rm = TRUE),
+    n_reaches       = n(),
+    .groups         = "drop"
+  ) |>
+  arrange(desc(IP_km))
 
-output_table <- df_ip  |> 
-  st_drop_geometry() |>    
-  group_by(gnis_nm) |> 
-  summarise(min_ip = min(ip_score),
-            max_ip = max(ip_score),
-            mean_ip = mean(ip_score)) |> 
-  arrange(desc(mean_ip)) 
-
-knitr::kable(output_table, digits = 2)
+knitr::kable(ip_km_table, digits = 2,
+             col.names = c("Stream", "IP-km", "Total Length (km)",
+                           "Mean IP_reach", "Reaches"))
 
 ```
 
@@ -865,10 +831,11 @@ ip_colors <- c(
 
 ggplot() +
   geom_sf(data = df_ip, aes(color = ip_class), linewidth = 0.8) +
-  scale_color_manual(values = ip_colors, name = "IP Class") +
+  scale_color_manual(values = ip_colors, name = "IP Class", na.translate = FALSE) +
   labs(
     title    = "DRAFT - Fall Chinook Intrinsic Potential",
-    caption  = "Thresholds from literature — not calibrated to local fish data"
+    subtitle = "IP_reach = (gradient × discharge × valley constraint)^(1/3)",
+    caption  = "Bjorkstedt et al. (2005); thresholds from literature — not calibrated to local fish data"
   ) +
   theme_minimal() +
   theme(legend.position = "right")
