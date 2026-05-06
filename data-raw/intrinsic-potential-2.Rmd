@@ -57,7 +57,8 @@ Stream network geometry and baseline reach attributes (slope, cumulative drainag
 ```{r load-flowlines, include=FALSE}
 flowlines_raw <- rivermile::processed_nhd
 
-flowlines_ip <- flowlines_raw |>
+flowlines_ip <- flowlines_raw |> 
+  filter(gnis_id != "00225871") |> # this is Indian Creek that flows into the Trinity River. There are two and I am keeping the one that flows into the Klamath River. 
   select(gnis_nm, gnis_id, nhdplusid = nhd_pl_, slope, tot_da_sq_km = tt_d_s_) |>
   mutate(slope = slope * 100)  # convert fraction to percent
 ```
@@ -338,7 +339,7 @@ tributary_units <- tribble(
   "Shasta River",      "15f",                TRUE,
   "Trinity River",     "15h",                TRUE, # DOUBLE CHECK
   "Jenny Creek",       "15c",                TRUE,
-  "Camp Creek",        "15b",                TRUE,
+  "Camp Creek",        "15c",                TRUE,
   "Scotch Creek",      "15c",                TRUE,
   "Shovel Creek",      "15c",                TRUE,
   "Spencer Creek",     "15c",                TRUE,
@@ -455,6 +456,8 @@ knitr::kable(
 ```
 
 ### IP by Population Unit
+
+Geospatially define population units for the Klamath Rive, based on table 2 of Williams et al. 2006
 
 ```{r echo=FALSE}
 # ── 1. Isolate and dissolve Klamath mainstem ──────────────────────────────────
@@ -659,12 +662,177 @@ ggplot() +
 
 ```
 
-```{r}
-# repeat with trinity river - lower and upper
+Geospatially define population units for the Trinity River, based on table 2 of Williams et al. 2006
 
+```{r echo=FALSE}
+# ── 1. Isolate and dissolve Trinity mainstem ──────────────────────────────────
+
+trinity_main <- ip |>
+  filter(gnis_nm == "Trinity River") |>
+  st_transform(32610)
+
+trinity_dissolved <- trinity_main |>
+  st_union() |>
+  st_as_sf()
+
+# ── 2. Define boundary confluence points ──────────────────────────────────────
+
+# North Fork Trinity confluence — snapped to mainstem
+nf_raw <- st_point(c(-123.127119, 40.769987)) |>
+  st_sfc(crs = 4326) |>
+  st_transform(32610) |>
+  st_as_sf()
+
+nf_snapped <- trinity_dissolved |>
+  st_nearest_points(nf_raw) |>
+  st_cast("POINT") |>
+  st_as_sf() |>
+  slice(2) |>
+  mutate(gnis_nm = "North Fork Trinity River")
+st_geometry(nf_snapped) <- "geometry"
+
+# Ramshorn Creek confluence — snapped to mainstem
+ramshorn_raw <- st_point(c(-122.669006, 41.151606)) |>
+  st_sfc(crs = 4326) |>
+  st_transform(32610) |>
+  st_as_sf()
+
+ramshorn_snapped <- trinity_dissolved |>
+  st_nearest_points(ramshorn_raw) |>
+  st_cast("POINT") |>
+  st_as_sf() |>
+  slice(2) |>
+  mutate(gnis_nm = "Ramshorn Creek")
+st_geometry(ramshorn_snapped) <- "geometry"
+
+# combine boundary points
+trinity_pts <- bind_rows(nf_snapped, ramshorn_snapped)
+
+# ── 4. Extract coordinates for unit polygons ──────────────────────────────────
+
+trinity_pt_coords <- trinity_pts |>
+  mutate(
+    x = st_coordinates(geometry)[, 1],
+    y = st_coordinates(geometry)[, 2]
+  ) |>
+  st_drop_geometry()
+
+trinity_pt_coords
+
+nf_x       <- trinity_pt_coords |> filter(gnis_nm == "North Fork Trinity River") |> pull(x)
+ramshorn_x <- trinity_pt_coords |> filter(gnis_nm == "Ramshorn Creek")           |> pull(x)
+
+# ── 5. Build population unit polygons ────────────────────────────────────────
+# per Table 2:
+# 15h Lower Trinity — Klamath confluence upstream to NF Trinity (non-inclusive)
+# 15i Upper Trinity — NF Trinity (inclusive) upstream to Ramshorn Creek (inclusive)
+# Trinity River segments upstream of Ramshorn are outside the ESU
+
+trinity_bb <- st_bbox(trinity_dissolved)
+
+xmin <- trinity_bb["xmin"] - 10000
+xmax <- trinity_bb["xmax"] + 10000
+ymin <- trinity_bb["ymin"] - 10000
+ymax <- trinity_bb["ymax"] + 10000
+
+# 15h — Lower Trinity: everything west/downstream of NF Trinity confluence
+poly_15h <- st_polygon(list(rbind(
+  c(xmin,  ymin),
+  c(nf_x,  ymin),
+  c(nf_x,  ymax),
+  c(xmin,  ymax),
+  c(xmin,  ymin)
+))) |>
+  st_sfc(crs = 32610) |>
+  st_as_sf() |>
+  mutate(population_unit_id = "15h")
+
+# 15i — Upper Trinity: NF Trinity to Ramshorn Creek
+poly_15i <- st_polygon(list(rbind(
+  c(nf_x,       ymin),
+  c(ramshorn_x, ymin),
+  c(ramshorn_x, ymax),
+  c(nf_x,       ymax),
+  c(nf_x,       ymin)
+))) |>
+  st_sfc(crs = 32610) |>
+  st_as_sf() |>
+  mutate(population_unit_id = "15i")
+
+# above Ramshorn — outside ESU
+poly_trinity_above <- st_polygon(list(rbind(
+  c(ramshorn_x, ymin),
+  c(xmax,       ymin),
+  c(xmax,       ymax),
+  c(ramshorn_x, ymax),
+  c(ramshorn_x, ymin)
+))) |>
+  st_sfc(crs = 32610) |>
+  st_as_sf() |>
+  mutate(population_unit_id = NA_character_)
+
+trinity_unit_polys <- bind_rows(poly_15h, poly_15i, poly_trinity_above)
+
+# ── 6. Assign population units via spatial join ───────────────────────────────
+
+trinity_midpoints <- trinity_main |>
+  mutate(
+    mid   = st_centroid(st_geometry(trinity_main)),
+    mid_x = st_coordinates(mid)[, 1],
+    mid_y = st_coordinates(mid)[, 2]
+  ) |>
+  st_drop_geometry() |>
+  st_as_sf(coords = c("mid_x", "mid_y"), crs = 32610)
+
+trinity_assigned <- trinity_midpoints |>
+  st_join(trinity_unit_polys, join = st_within) |>
+  st_drop_geometry() |>
+  select(nhdplusid, population_unit_id)
+
+trinity_units <- trinity_main |>
+  left_join(trinity_assigned, by = "nhdplusid") |>
+  left_join(
+    table2 |> select(id, population_unit, basin, boundaries),
+    by = c("population_unit_id" = "id")
+  ) |>
+  mutate(
+    gnis_nm      = "Trinity River",
+    in_soncc_esu = !is.na(population_unit_id)
+  )
+
+# ── 8. Visual check ───────────────────────────────────────────────────────────
+
+ggplot() +
+  geom_sf(
+    data      = trinity_units,
+    aes(color = population_unit),
+    linewidth = 1.4
+  ) +
+  geom_sf(
+    data  = trinity_pts,
+    size  = 3,
+    shape = 21,
+    fill  = "white",
+    color = "black"
+  ) +
+  geom_label_repel(
+    data        = trinity_pts,
+    aes(label   = gnis_nm,
+        geometry = geometry),
+    stat        = "sf_coordinates",
+    size        = 3,
+    box.padding = 0.4
+  ) +
+  scale_color_brewer(palette = "Set1", name = "Population Unit",
+                     na.value = "grey60") +
+  theme_bw() +
+  labs(
+    title    = "Trinity River Population Units",
+    subtitle = "Based on Williams et al. (2006) Table 2 boundaries"
+  )
 ```
 
-```{r}
+```{r echo=FALSE}
 ip_final <- bind_rows(
   # non-Klamath rivers — join population units from tributary_units by name
   ip |>
@@ -683,7 +851,54 @@ ip_final <- bind_rows(
     mutate(in_soncc_esu = TRUE) |>
     st_transform(4326) |>
     st_cast("MULTILINESTRING")
-) |> glimpse()
+)
+# ── 9. Update ip_final ────────────────────────────────────────────────────────
+# replace the Trinity River rows that previously had a single unit
+# with the newly split lower/upper assignments
+
+ip_final <- ip_final |>
+  filter(gnis_nm != "Trinity River") |>
+  bind_rows(
+    trinity_units |>
+      st_transform(4326) |>
+      st_cast("MULTILINESTRING")
+  ) |> 
+  filter(!is.na(population_unit))
+```
+```{r}
+ggplot() +
+  geom_sf(
+    data      = ip_final,
+    aes(color = population_unit),
+    linewidth = 1.4
+  ) +
+  scale_color_brewer(palette = "Set1",  name = "Population Unit") +
+  theme_bw() +
+  labs(
+    title    = "All Population Units",
+    subtitle = "Based on Williams et al. (2006) Table 2 boundaries"
+  )
+
+```
+
+```{r}
+ip_final_pop_unit <- ip_final |>
+  st_drop_geometry() |>
+  group_by(population_unit) |>
+  summarise(
+    `IP-km`              = round(sum(reach_length_km * IP_reach, na.rm = TRUE), 1),
+    `Total length (km)`  = round(sum(reach_length_km, na.rm = TRUE), 1),
+    `Mean IP_reach`      = round(mean(IP_reach, na.rm = TRUE), 2),
+    Reaches              = n(),
+    .groups              = "drop"
+  ) |>
+  arrange(desc(`IP-km`))
+
+knitr::kable(
+  ip_final_pop_unit,
+  caption = "IP-km by population unit: expected equivalent length of continuous high-quality habitat in each population unit (Bjorkstedt et al. 2005, Williams et al. 2006)."
+)
+
 ```
 
 ```{r eval=FALSE, include=FALSE}
@@ -694,7 +909,7 @@ library(leaflet.extras)
 # ── prep: reproject to WGS84 and define colors ────────────────────────────────
 
 ip_wgs <- ip_final |>
-  st_transform(4326)
+  st_transform(4326) 
 
 # create color palette matching Set1
 units       <- unique(ip_wgs$population_unit)
@@ -743,27 +958,11 @@ leaflet(ip_wgs) |>
 
 ```
 
-```{r}
-ggplot() +
-  geom_sf(
-    data      = ip_final,
-    aes(color = population_unit),
-    linewidth = 1.4
-  ) +
-  scale_color_brewer(palette = "Set1",  name = "Population Unit") +
-  theme_bw() +
-  labs(
-    title    = "All Population Units",
-    subtitle = "Based on Williams et al. (2006) Table 2 boundaries"
-  )
-
-```
-
 ### Map
 
 ```{r ip-map, fig.width=9, fig.height=7, fig.cap="Draft intrinsic potential for fall Chinook salmon spawning, Klamath Basin. Class breaks derived from Jenks natural breaks on IP_reach."}
 
-river_labels <- ip |>
+river_labels <- ip_final |>
   filter(!is.na(gnis_nm), gnis_nm != "") |>
   group_by(gnis_nm) |>
   summarise(geometry = st_union(geometry), .groups = "drop") |>
@@ -775,7 +974,7 @@ river_labels <- ip |>
 
 ggplot() +
   geom_sf(data = rivermile::klamath_hucs |> st_union(), fill = NA, color = "grey60") +
-  geom_sf(data = ip, aes(color = IP_reach), linewidth = 0.9) +
+  geom_sf(data = ip_final, aes(color = IP_reach), linewidth = 0.9) +
   labs(
     title    = "DRAFT — Fall Chinook Intrinsic Potential",
     subtitle = expression(IP[reach] == (S[gradient] %.% S[discharge] %.% S[confinement])^{1/3}),
@@ -791,6 +990,28 @@ ggplot() +
     plot.caption = element_text(size = 9, color = "grey40")
   )
 ```
+
+### Save data 
+
+```{r}
+chinook_ip <- ip_final |> 
+  filter(!is.na(IP_reach)) |>
+  st_drop_geometry() |>
+  group_by(river = gnis_nm, population_unit) |>
+  summarise(
+    `ip_km`              = round(sum(reach_length_km * IP_reach, na.rm = TRUE), 1),
+    `total_ip_km`  = round(sum(reach_length_km, na.rm = TRUE), 1),
+    `ip_mean`      = round(mean(IP_reach, na.rm = TRUE), 2),
+    n_reaches              = n(),
+    .groups              = "drop"
+  ) |> 
+  mutate(river = tolower(river),
+         population_unit = tolower(population_unit)) |> 
+  glimpse()
+
+usethis::use_data(chinook_ip, overwrite = TRUE)
+```
+
 ```{r}
 knitr::knit_exit()
 ```
