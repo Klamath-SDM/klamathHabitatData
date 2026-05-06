@@ -717,8 +717,6 @@ trinity_pt_coords <- trinity_pts |>
   ) |>
   st_drop_geometry()
 
-trinity_pt_coords
-
 nf_x       <- trinity_pt_coords |> filter(gnis_nm == "North Fork Trinity River") |> pull(x)
 ramshorn_x <- trinity_pt_coords |> filter(gnis_nm == "Ramshorn Creek")           |> pull(x)
 
@@ -800,11 +798,10 @@ trinity_units <- trinity_main |>
     in_soncc_esu = !is.na(population_unit_id)
   )
 
-# ── 8. Visual check ───────────────────────────────────────────────────────────
-
 ggplot() +
   geom_sf(
-    data      = trinity_units,
+    data      = trinity_units |> 
+      filter(!is.na(population_unit)),
     aes(color = population_unit),
     linewidth = 1.4
   ) +
@@ -993,6 +990,8 @@ ggplot() +
 
 ### Save data 
 
+Save data as `chinook_ip`
+
 ```{r}
 chinook_ip <- ip_final |> 
   filter(!is.na(IP_reach)) |>
@@ -1000,7 +999,7 @@ chinook_ip <- ip_final |>
   group_by(river = gnis_nm, population_unit) |>
   summarise(
     `ip_km`              = round(sum(reach_length_km * IP_reach, na.rm = TRUE), 1),
-    `total_ip_km`  = round(sum(reach_length_km, na.rm = TRUE), 1),
+    `total_reach_length_km`  = round(sum(reach_length_km, na.rm = TRUE), 1),
     `ip_mean`      = round(mean(IP_reach, na.rm = TRUE), 2),
     n_reaches              = n(),
     .groups              = "drop"

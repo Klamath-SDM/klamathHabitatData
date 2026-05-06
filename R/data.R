@@ -84,9 +84,7 @@
 #'   \item{ip_km}{Intrinsic potential integrated over accessible stream length
 #'     within the river, calculated as the sum of reach length (km)
 #'     multiplied by reach-scale IP score. (numeric, IP-km)}
-#'   \item{total_ip_km}{Total intrinsic potential integrated over the full
-#'     accessible stream length,
-#'     calculated using the same method as \code{ip_km} (numeric, IP-km)}
+#'   \item{total_reach_length_km}{total reach length (numeric, IP-km)}
 #'   \item{ip_mean}{Mean reach-scale IP score across all accessible reaches,
 #'   weighted by reach length. Values range from
 #'     0 (unsuitable) to 1 (ideal habitat) (numeric)}
