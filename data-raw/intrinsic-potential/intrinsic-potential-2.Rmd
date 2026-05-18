@@ -157,7 +157,7 @@ valley_width_via_transects <- function(geom_vb, flowline, max_width) {
 ```
 
 ```{r load-dem-catchments, include=FALSE}
-dem        <- stars::read_stars("../../klamathAgData/data-raw/DEM/dem_z12_utm10.tif")
+dem        <- stars::read_stars("../../../klamathAgData/data-raw/DEM/dem_z12_utm10.tif")
 catchments <- rivermile::nhd_catchments |>
   mutate(nhdplusid = as.character(nhdplusid)) |>
   st_transform(st_crs(dem))
@@ -222,7 +222,7 @@ batches <- list(
 for (b in batches) {
   saveRDS(
     vb_fun(flowlines_ip |> slice(b$rows)),
-    here::here("data-raw", b$file)
+    here::here("data-raw", "intrinsic-potential", b$file)
   )
 }
 ```
@@ -235,7 +235,7 @@ vb_files <- c(
   "valley_bottom_width_4001_4236.rds"
 )
 
-vb <- bind_rows(lapply(vb_files, function(f) read_rds(here::here("data-raw", f))))
+vb <- bind_rows(lapply(vb_files, function(f) read_rds(here::here("data-raw","intrinsic-potential", f))))
 
 flowlines_ip <- flowlines_ip |>
   mutate(nhdplusid = as.character(nhdplusid)) |>
