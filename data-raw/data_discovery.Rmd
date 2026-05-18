@@ -15,7 +15,7 @@ library(sf)
 library(rivermile)
 
 #install.packages("nhdplusTools")
-library(nhdplusTools)
+# library(nhdplusTools)
 
 ```
 Watershed
@@ -89,9 +89,14 @@ rivermile::nhd_flowline
 https://www.epa.gov/waterdata/get-nhdplus-national-hydrography-dataset-plus-data
 
 ```{r}
-layers <- st_layers(here::here("data-raw", "nhdplus_epasnapshot2022_or.gdb"))
+layers <- st_layers(here::here("data-raw", "shapes", "nhdplus_epasnapshot2022_or.gdb"))
 
 nhdflowline_or <- st_read(here::here("data-raw", "nhdplus_epasnapshot2022_or.gdb"), layer =  "nhdflowline_or")
 
 nhdplusflowlinevaa_or <- st_read(here::here("data-raw", "nhdplus_epasnapshot2022_or.gdb"), layer =  "nhdplusflowlinevaa_or")
+
+catchment_fabric_or <- st_read(here::here("data-raw", "shapes", "nhdplus_epasnapshot2022_or.gdb"), layer =  "catchment_fabric_or")
+
 ```
+
+

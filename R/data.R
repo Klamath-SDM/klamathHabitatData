@@ -65,3 +65,87 @@
 #'   \item \code{geometry}: the spatial geometry associated with each extent
 #'   }
 'barriers'
+
+#' Chinook Salmon Intrinsic Potential by River and Population Unit
+#'
+#' A dataset containing intrinsic potential (IP) habitat estimates for Chinook
+#' salmon across rivers in the Klamath Basin. Population unit classifications follow
+#' Williams et al. (2006). IP model variables and suitability curves follow
+#' Agrawal et al. (2005) and Bjorkstedt et al. (2005).
+#'
+#' @format A data frame with 25 rows and 6 variables:
+#' \describe{
+#'   \item{river}{Name of the river or stream reach (character, lowercase)}
+#'   \item{population_unit}{Population unit classification per Williams et al.
+#'     (2006) Table 2. One of: lower klamath river, middle klamath river, upper
+#'     klamath river, lower trinity river, upper trinity river, salmon river,
+#'     scott river, shasta river, or upstream of dam removal (character,
+#'     lowercase)}
+#'   \item{ip_km}{Intrinsic potential integrated over accessible stream length
+#'     within the river, calculated as the sum of reach length (km)
+#'     multiplied by reach-scale IP score. (numeric, IP-km)}
+#'   \item{total_reach_length_km}{total reach length (numeric, IP-km)}
+#'   \item{ip_mean}{Mean reach-scale IP score across all accessible reaches,
+#'   weighted by reach length. Values range from
+#'     0 (unsuitable) to 1 (ideal habitat) (numeric)}
+#'   \item{n_reaches}{Number of NHD stream reaches included in the IP
+#'     calculation for that river (integer)}
+#' }
+#'
+#' @details
+#' Intrinsic potential (IP) is calculated as the geometric mean of three
+#' reach-scale suitability scores — channel gradient, mean annual discharge,
+#' and valley width index — each mapped to a suitability curve ranging from
+#' 0 to 1 following Burnett et al. (2003) and Agrawal et al. (2005). The
+#' limiting-factors structure of the model means a low score on any single
+#' variable substantially reduces overall IP.
+#'
+#' Stream network attributes were derived from the National Hydrography Dataset
+#' Plus (NHDPlus). Population unit boundaries follow Table 2 in Williams et al.
+#' (2006), with tributaries not explicitly named in that table assigned to the
+#' population unit of the mainstem reach they enter. The Salmon, Scott, and
+#' Shasta rivers are treated as independent population units per Table 2.
+#' Rivers upstream of the Klamath dam removal area (Williamson River, Sprague
+#' River, Wood River, Lost River, and Link River) are grouped into a single
+#' unit labelled "upstream of dam removal".
+#'
+#' @source
+#' \itemize{
+#'   \item Agrawal, A., Schick, R.S., Bjorkstedt, E.P., Szerlong, R.G.,
+#'     Goslin, M.N., Spence, B.C., Williams, T.H., and Burnett, K.M. (2005).
+#'     Predicting the potential for historical coho, Chinook and steelhead
+#'     habitat in northern California. NOAA Technical Memorandum
+#'     NMFS-SWFSC-379.
+#'   \item Burnett, K.M., Reeves, G.H., Miller, D., Clarke, S., Christiansen,
+#'     K., and Vance-Borland, K. (2003). A first step toward broad-scale
+#'     identification of freshwater protected areas for Pacific salmon and trout
+#'     in Oregon, USA. Proceedings of the World Congress on Aquatic Protected
+#'     Areas, Cairns, Australia.
+#'   \item Williams, T.H., Bjorkstedt, E.P., Duffy, W.G., Hillemeier, D.,
+#'     Kautsky, G., Lisle, T.E., McCain, M., Rode, M., Szerlong, R.G., Schick,
+#'     R.S., Goslin, M.N., and Agrawal, A. (2006). Historical population
+#'     structure of coho salmon in the Southern Oregon/Northern California
+#'     Coasts Evolutionarily Significant Unit. NOAA Technical Memorandum
+#'     NMFS-SWFSC-390.
+#' }
+#'
+#' @examples
+#' # summarise total IP-km by population unit
+#' chinook_ip |>
+#'   dplyr::group_by(population_unit) |>
+#'   dplyr::summarise(
+#'     total_ip_km   = sum(ip_km, na.rm = TRUE),
+#'     mean_ip       = mean(ip_mean, na.rm = TRUE),
+#'     total_reaches = sum(n_reaches)
+#'   ) |>
+#'   dplyr::arrange(dplyr::desc(total_ip_km))
+#'
+#' # plot IP-km by river colored by population unit
+#' ggplot2::ggplot(chinook_ip,
+#'   ggplot2::aes(x = ip_km,
+#'                y = reorder(river, ip_km),
+#'                fill = population_unit)) +
+#'   ggplot2::geom_col() +
+#'   ggplot2::labs(x = "IP-km", y = NULL, fill = "Population Unit") +
+#'   ggplot2::theme_bw()
+"chinook_ip"

@@ -67,7 +67,7 @@ load("~/Documents/git/klamath/s3-model-code/model-files/export/S3/data/HABITAT.r
 habitat <- HABITAT |> 
   janitor::clean_names() |> 
   mutate(river_km = round(rkm_up, 0)) |> 
-  select(-rkm_up)
+  select(-rkm_up) |> 
   glimpse()
   
 hab_area_by_rm <- habitat |> left_join(hab_area)
@@ -86,14 +86,49 @@ klamath_river_units <- klamath_river |>
 
 join <- hab_area_by_rm |> left_join(klamath_river_units)
 
-saveRDS(join, "data-raw/habitat_river_mile_join.rds")
+saveRDS(join, "habitat_river_mile_join.rds")
+
+```
+
+```{r eval=FALSE, include=FALSE}
+# This is the WUA curve provided by Emily Chen on 3/17
+# Curious if 2018 WUA is different than those provided earlier
+# Update: it is the same. Removing from dashboard 
+hab_area_2 <- read_csv("~/Documents/git/klamath/s3-model-code/S3 input and example/2018 2D WUA Som method chin WUA S3 Input 2018-12-17.csv") |> 
+  janitor::clean_names() |> 
+  glimpse()
+
+
+habitat_2 <- read_csv("~/Documents/git/klamath/s3-model-code/S3 input and example/habitats20160725.csv") |> 
+  janitor::clean_names() |> 
+  mutate(river_km = round(rkm_up, 0)) |> 
+  select(-rkm_up) |> 
+  glimpse()
+  
+hab_area_by_rm_2 <- habitat_2 |> left_join(hab_area_2)
+
+klamath_river <- rivermile::klamath_river |> 
+  glimpse()
+
+klamath_river_units_2 <- klamath_river |> 
+  mutate(river_km = round(river_km, 0)) |> 
+  filter(river_km %in% hab_area_by_rm_2$river_km) |> 
+  select(geometry = x, river_km) |> 
+  group_by(river_km) |>
+  slice(1) |>       
+  ungroup() |> 
+  glimpse()
+
+join_2 <- hab_area_by_rm_2 |> left_join(klamath_river_units_2)
+
+saveRDS(join_2, "habitat_river_mile_join_2018.rds")
 
 ```
 
 
 ```{r}
 
-join <- readRDS("habitat_river_mile_join.rds")
+join <- readRDS("habitat_river_mile_join.rds")  
 
 units_sf <- join |>
   select(unit_num, river_km,  geometry) |>
@@ -105,13 +140,14 @@ init_unit <- units_sf$unit_num[[1]]
 plot_df <- join |>
   st_drop_geometry() |>
   select(unit_num, flow_cfs, spn_m2, fry_m2, juv_m2) |>
-  group_by(unit_num, flow_cfs) |>
-  summarise(
-    spn_m2 = max(spn_m2, na.rm = TRUE),
-    fry_m2 = max(fry_m2, na.rm = TRUE),
-    juv_m2 = max(juv_m2, na.rm = TRUE),
-    .groups = "drop"
-  )
+  distinct()
+  # group_by(unit_num, flow_cfs) |>
+  # summarise(
+  #   spn_m2 = max(spn_m2, na.rm = TRUE),
+  #   fry_m2 = max(fry_m2, na.rm = TRUE),
+  #   juv_m2 = max(juv_m2, na.rm = TRUE),
+  #   .groups = "drop"
+  # )
 ```
 
 Column {data-width = 40}
@@ -192,7 +228,7 @@ output$hab_plot <- renderPlot({
     )
 
   ggplot(df_u, aes(x = flow_cfs, y = habitat_m2)) +
-    geom_line(linewidth = 1) +
+    geom_line(linewidth = 1, alpha = 0.6, color = "darkblue") +
     facet_wrap(~life_stage, ncol = 1, scales = "free_y") +
     labs(
       title = paste("Unit Number: ", u),

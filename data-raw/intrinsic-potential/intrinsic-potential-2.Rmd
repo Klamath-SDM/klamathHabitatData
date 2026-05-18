@@ -1,0 +1,1054 @@
+---
+title: "Intrinsic Potential for Chinook Salmon — Klamath Basin"
+author: "Maddee Wiggins (FlowWest)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(sf)
+library(rivermile)
+library(terra)
+library(stars)
+library(ggrepel)
+library(classInt)
+library(here)
+```
+
+## Objective
+
+Estimate the intrinsic potential (IP) for fall Chinook salmon spawning across the Klamath Basin stream network. Following Bjorkstedt et al. (2005), IP is modeled at two scales:
+
+-   **IP_reach** — a reach-level geometric mean of three physical suitability scores (gradient, discharge, and valley confinement), structured as a limiting-factors analysis in which very low suitability on any single variable greatly reduces the overall score regardless of the other two.
+-   **IP-km** — a watershed-level metric equal to the length-weighted sum of IP_reach across all accessible reaches, expressing a watershed's expected equivalent length of continuous high-quality habitat.
+
+All reaches are evaluated regardless of survey coverage, treating the absence of fish observations as a gap in knowledge rather than evidence of absence.
+
+### Literature Context
+
+| Paper | Species | Study Area | IP Variables | IP Calculation |
+|----|----|----|----|----|
+| Agrawal et al. (2005) | Coho salmon (juvenile), winter steelhead (juvenile), fall-run Chinook salmon (juvenile) | Northern California (Cape Blanco, OR to Monterey Bay, CA) | Channel gradient, valley constraint, mean annual discharge | Geometric mean of three suitability scores (0–1 scale) |
+| Beechie et al. (2006) | Not species-specific — focused on channel–floodplain dynamics relevant to salmonids | Pacific Coastal Forest, Pacific Northwest (Puget trough and adjacent ranges) | Channel slope, discharge (2-yr flood), channel confinement (valley width:bankfull width ratio) | Stepwise predictive model classifying channel pattern (straight, meandering, island-braided, braided); no IP score per se |
+| Connor et al. (2015) | Chinook salmon (spawning and rearing) | Skagit River basin, Washington | Multiple regression: drainage area, channel length, forest canopy, mean basin slope; IP model: stream gradient, stream width, mean basin elevation | Geometric mean of three IP suitability scores; Reach IP = IP score × accessible channel length |
+| Busch et al. (2013) | Fall Chinook salmon (spawning) | Lower Columbia River ESU (22 populations) | Channel confinement (valley width:bankfull width), channel width, channel gradient | Geometric mean of three suitability scores; population IP = Σ(reach IP score × reach length) |
+| Burnett et al. (2007) | Coho salmon (juvenile rearing), steelhead (juvenile rearing) | Coastal Province of Oregon (\~2.5 million ha) | Mean annual stream flow, valley constraint (valley-width index), channel gradient | Geometric mean of three species-specific index scores (0–1); high IP threshold ≥0.75 |
+| Bjorkstedt et al. (2005) | Coho salmon (CCC ESU), Chinook salmon (fall- and spring-run, CC ESU), Steelhead (NC and CCC ESUs); spawning and rearing habitat modeled for coho and steelhead; spawning only for Chinook | North-Central California Coast Recovery Domain (NCCCRD); multiple basins spanning the Central California Coast and Northern California Coast ESUs | Channel gradient, valley constraint (valley floor width / active channel width), mean annual discharge; species-specific suitability curves (Burnett et al. 2003, Agrawal et al. 2005) | Geometric mean of three suitability scores (0–1); reach scale \~50–200 m; limiting-factors structure (a low score in any one variable substantially reduces overall IP) |
+| Ramos & Ward (2023) | Coho salmon (Oncorhynchus kisutch), Southern Oregon/Northern California Coast ESU; juvenile summer rearing habitat (primary focus) and spawning habitat | Six Klamath River tributaries (CA/OR) above Iron Gate Dam within the historic coho distribution: Scotch, Camp, Jenny, Fall, Shovel, and Spencer creeks | Mean annual discharge (estimated via regression for ungaged sites), channel gradient, valley constraint; suitability curves from Agrawal et al. (2005) | Geometric mean of three suitability scores (0–1); reach lengths 160–810 m (shorter reaches in steeper gradient); weighted IP-km = reach length × IP score, summed per tributary; spawner target of 40 adults per IP-km |
+| Wohner et al. (2025) | Spring Chinook salmon (Oncorhynchus tshawytscha) — primary; Winter Steelhead (O. mykiss) — secondary; spawning habitat for both species | Upper Rogue River Basin, Oregon; reaches assessed below dams where spawning gravels are degraded | Elevation, channel width, and gradient derived from the publicly available NetMap synthetic stream channel dataset; no field measurements required | IP scores at \~100 m reach scale; suitability curves applied to NetMap stream attributes for spring Chinook and winter steelhead spawning; output used to rank reaches for gravel augmentation prioritization; tool available on GitHub |
+
+------------------------------------------------------------------------
+
+## Data Aggregation and Processing
+
+### Flowlines
+
+Stream network geometry and baseline reach attributes (slope, cumulative drainage area) are sourced from NHDPlus.
+
+-   NHDplus geodatabase: <https://www.sciencebase.gov/catalog/item/5d30c29ae4b01d82ce84aa5e>
+-   NHDplus user guide: <https://pubs.usgs.gov/of/2019/1096/ofr20191096.pdf>
+
+```{r load-flowlines, include=FALSE}
+flowlines_raw <- rivermile::processed_nhd
+
+flowlines_ip <- flowlines_raw |> 
+  filter(gnis_id != "00225871") |> # this is Indian Creek that flows into the Trinity River. There are two and I am keeping the one that flows into the Klamath River. 
+  select(gnis_nm, gnis_id, nhdplusid = nhd_pl_, slope, tot_da_sq_km = tt_d_s_) |>
+  mutate(slope = slope * 100)  # convert fraction to percent
+```
+
+```{r map-network, fig.cap="NHDPlus stream network within the Klamath Basin study area."}
+ggplot() +
+  geom_sf(data = rivermile::klamath_hucs |> st_union(), fill = NA, color = "grey50") +
+  geom_sf(data = flowlines_raw, color = "steelblue", linewidth = 0.3, alpha = 0.6) +
+  theme_minimal(base_size = 12) +
+  theme(axis.title = element_blank(), panel.grid = element_blank()) +
+  labs(title = "Klamath Basin Stream Network")
+```
+
+### Estimated Discharge
+
+Mean annual discharge is estimated from cumulative upstream drainage area using a regional power-law regression:
+
+$$Q = 0.028 \cdot A^{0.89}$$
+
+where $A$ is total drainage area in km². Because Chinook suitability is 1.0 for any discharge ≥ 3 m³/s, a more precise discharge estimate is unlikely to alter IP classifications substantially for the larger named reaches.
+
+```{r discharge, include=FALSE}
+flowlines_ip <- flowlines_ip |>
+  mutate(discharge_mean_est = 0.028 * tot_da_sq_km^0.89)
+```
+
+### Bankfull Width
+
+Bankfull width is estimated with the Bieger et al. (2015) regional equation:
+
+$$W_{bf} = 2.76 \cdot A^{0.399}$$
+
+where $A$ is total drainage area (km²). Bankfull width enters the IP model indirectly as the denominator of the valley width index.
+
+```{r bankfull-width, include=FALSE}
+flowlines_ip <- flowlines_ip |>
+  mutate(bf_width_m = 2.76 * tot_da_sq_km^0.399)
+```
+
+### Valley Bottom Width
+
+Valley bottom width is derived from a 12-m DEM using the slope-cutoff method: raster cells with slope \< 14.04° (tan⁻¹(0.25)) are classified as valley bottom, and mean width is measured via perpendicular transects along each reach flowline. The methodology follows the [South Fork Eel River Basin Geomorphic Classification](https://watermanagement.ucdavis.edu/download_file/view_inline/144) and the implementation in [habistat](https://github.com/FlowWest/habistat).
+
+```{r valley-fns, include=FALSE}
+valley_bottom <- function(catchment, flowline, dem) {
+  dem |>
+    st_crop(catchment) |>
+    st_as_stars() |>
+    starsExtra::slope() |>
+    mutate(valley_bottom = if_else(
+      slope < units::set_units(atan(0.25) * 180 / pi, "degrees"), 1, NA
+    )) |>
+    select(valley_bottom) |>
+    st_as_sf(merge = TRUE) |>
+    st_filter(st_zm(flowline))
+}
+
+valley_bottom_by_comid <- function(x, dem, catchment, flowlines) {
+  c <- catchment |> mutate(nhdplusid = as.character(nhdplusid)) |>
+    filter(nhdplusid == x) |> st_transform(st_crs(dem))
+  f <- flowlines |> mutate(nhdplusid = as.character(nhdplusid)) |>
+    filter(nhdplusid == x) |> st_transform(st_crs(dem))
+  valley_bottom(c, f, dem)
+}
+
+perpendicular_transect <- function(pair, transect_length) {
+  p1 <- st_coordinates(st_sfc(pair[[1]])); p2 <- st_coordinates(st_sfc(pair[[2]]))
+  mx <- (p1[1,"X"] + p2[1,"X"]) / 2; my <- (p1[1,"Y"] + p2[1,"Y"]) / 2
+  pb <- atan2(p2[1,"Y"] - p1[1,"Y"], p2[1,"X"] - p1[1,"X"]) + pi / 2
+  r  <- transect_length / 2
+  st_linestring(matrix(
+    c(mx + r*cos(pb), my + r*sin(pb), mx - r*cos(pb), my - r*sin(pb)),
+    ncol = 2, byrow = TRUE
+  ))
+}
+
+perpendicular_transects <- function(ls, transect_length) {
+  if (inherits(ls, "sf"))       { crs_use <- st_crs(ls); ls <- st_geometry(ls) }
+  else if (inherits(ls, "sfc")) { crs_use <- st_crs(ls) }
+  else if (inherits(ls, "sfg")) { crs_use <- NA; ls <- st_sfc(ls) }
+  else stop("ls must be sf, sfc, or sfg")
+  coords <- st_coordinates(st_zm(ls))[, 1:2, drop = FALSE]
+  if (nrow(coords) < 2) stop("Need at least 2 coordinates to build transects")
+  pairs <- lapply(
+    seq_len(nrow(coords) - 1),
+    function(i) list(st_point(coords[i, ]), st_point(coords[i + 1, ]))
+  )
+  st_sfc(lapply(pairs, perpendicular_transect, transect_length = transect_length), crs = crs_use)
+}
+
+valley_width_via_transects <- function(geom_vb, flowline, max_width) {
+  transects <- perpendicular_transects(flowline, transect_length = max_width)
+  if ("sfg" %in% class(geom_vb)) geom_vb <- st_sfc(geom_vb, crs = st_crs(transects))
+  mean(st_length(st_intersection(transects, geom_vb)))
+}
+```
+
+```{r load-dem-catchments, include=FALSE}
+dem        <- stars::read_stars("../../../klamathAgData/data-raw/DEM/dem_z12_utm10.tif")
+catchments <- rivermile::nhd_catchments |>
+  mutate(nhdplusid = as.character(nhdplusid)) |>
+  st_transform(st_crs(dem))
+```
+
+Valley-width calculations are computationally intensive and have been pre-computed in batches. The chunk below is retained for reproducibility but is not evaluated during rendering.
+
+```{r compute-valley-width, eval=FALSE, include=FALSE}
+safe_vb_transect <- purrr::possibly(
+  function(a, b) {
+    out <- valley_width_via_transects(a, b, 1000)
+    if (length(out) == 0 || is.nan(out)) NA_real_ else as.numeric(out)
+  },
+  otherwise = NA_real_
+)
+
+safe_vb_simple <- purrr::possibly(
+  function(x) {
+    out <- as.numeric(terra::width(terra::vect(x)))
+    if (length(out) == 0 || is.nan(out)) NA_real_ else out
+  },
+  otherwise = NA_real_
+)
+
+vb_fun <- function(data) {
+  data |>
+    mutate(
+      nhdplusid = as.character(nhdplusid),
+      flowline  = map(
+        geometry,
+        ~ st_sfc(st_zm(.x), crs = st_crs(flowlines_ip)) |> st_transform(st_crs(dem))
+      )
+    ) |>
+    st_drop_geometry() |>
+    mutate(valley_bottom_geoms = map(
+      nhdplusid,
+      purrr::possibly(
+        function(x) {
+          vb <- valley_bottom_by_comid(x, dem, catchment = catchments, flowlines = flowlines_ip)
+          st_set_crs(st_union(st_geometry(vb)), st_crs(dem))
+        },
+        otherwise = st_sfc(st_polygon(), crs = st_crs(dem))
+      )
+    )) |>
+    mutate(
+      vb_width_simple   = map_dbl(valley_bottom_geoms, safe_vb_simple),
+      vb_width_transect = map2_dbl(valley_bottom_geoms, flowline, safe_vb_transect)
+    ) |>
+    select(nhdplusid, flowline, valley_bottom_geoms, vb_width_simple, vb_width_transect)
+}
+
+batches <- list(
+  list(rows = 1:500,      file = "valley_bottom_width_1_500.rds"),
+  list(rows = 501:1000,   file = "valley_bottom_width_501_1000.rds"),
+  list(rows = 1001:1500,  file = "valley_bottom_width_1001_1500.rds"),
+  list(rows = 1501:2000,  file = "valley_bottom_width_1501_2000.rds"),
+  list(rows = 2001:3000,  file = "valley_bottom_width_2001_3000.rds"),
+  list(rows = 3001:4000,  file = "valley_bottom_width_3001_4000.rds"),
+  list(rows = 4001:4326,  file = "valley_bottom_width_4001_4236.rds")
+)
+
+for (b in batches) {
+  saveRDS(
+    vb_fun(flowlines_ip |> slice(b$rows)),
+    here::here("data-raw", "intrinsic-potential", b$file)
+  )
+}
+```
+
+```{r load-valley-width, include=FALSE}
+vb_files <- c(
+  "valley_bottom_width_1_500.rds",    "valley_bottom_width_501_1000.rds",
+  "valley_bottom_width_1001_1500.rds","valley_bottom_width_1501_2000.rds",
+  "valley_bottom_width_2001_3000.rds","valley_bottom_width_3001_4000.rds",
+  "valley_bottom_width_4001_4236.rds"
+)
+
+vb <- bind_rows(lapply(vb_files, function(f) read_rds(here::here("data-raw","intrinsic-potential", f))))
+
+flowlines_ip <- flowlines_ip |>
+  mutate(nhdplusid = as.character(nhdplusid)) |>
+  left_join(vb |> select(nhdplusid, vb_width_simple, vb_width_transect),
+            by = "nhdplusid")
+```
+
+### Valley Width Index
+
+The valley width index (VWI) is the ratio of valley bottom width to bankfull channel width:
+
+$$VWI = \frac{W_{valley}}{W_{bf}}$$
+
+VWI serves as a proxy for lateral confinement: values \< 1 indicate a fully confined channel; values \> 4 indicate an unconfined, laterally mobile channel where gravel recruitment and retention are favorable.
+
+```{r valley-width-index, include=FALSE}
+flowlines_ip <- flowlines_ip |>
+  mutate(valley_width_index = vb_width_transect / bf_width_m)
+```
+
+```{r vwi-map, fig.cap="Valley Width Index across the Klamath Basin stream network. Lighter values indicate more unconfined reaches."}
+ggplot() +
+  geom_sf(data = rivermile::klamath_hucs |> st_union(), fill = NA, color = "grey50") +
+  geom_sf(data = flowlines_ip |> filter(!is.na(valley_width_index)),
+          aes(color = pmin(valley_width_index, 10)), linewidth = 0.5) +
+  scale_color_viridis_c(name = "VWI\n(capped at 10)", option = "mako", direction = -1) +
+  theme_minimal(base_size = 12) +
+  theme(axis.title = element_blank(), panel.grid = element_blank())
+```
+
+```{r vwi-summary}
+flowlines_ip |>
+  st_drop_geometry() |>
+  group_by(gnis_nm) |>
+  summarise(
+    Min    = round(min(valley_width_index, na.rm = TRUE), 1),
+    Median = round(median(valley_width_index, na.rm = TRUE), 1),
+    Mean   = round(mean(valley_width_index, na.rm = TRUE), 1),
+    Max    = round(max(valley_width_index, na.rm = TRUE), 1),
+    `% Missing` = round(mean(is.na(valley_width_index)) * 100, 0)
+  ) |>
+  knitr::kable(caption = "Valley Width Index summary by stream.")
+```
+
+------------------------------------------------------------------------
+
+## Suitability Criteria
+
+Suitability scores are expressed on a continuous 0–1 scale (1 = fully suitable, 0 = unsuitable). Thresholds are drawn from Agrawal et al. 2005.
+
+```{r suitability-curves, fig.cap="Suitability step functions for gradient (%), discharge (m³/s), and valley width index used in the IP model."}
+suit_curves <- tribble(
+  ~variable,                ~value, ~suitability,
+  "Gradient (%)",              0.0,          1.0,
+  "Gradient (%)",              3.0,          0.0,
+  "Gradient (%)",              8.0,          0.0,
+  "Discharge (m³/s)",          0.0,          1.0,
+  "Discharge (m³/s)",        100.0,          1.0,
+  "Valley Width Index",        0.0,          0.8,
+  "Valley Width Index",        2.0,          1.0,
+  "Valley Width Index",        8.0,          1.0
+)
+
+ggplot(suit_curves, aes(x = value, y = suitability)) +
+  geom_step(linewidth = 1, color = "steelblue", direction = "hv") +
+  facet_wrap(~variable, scales = "free_x") +
+  scale_y_continuous(limits = c(-0.05, 1.1), breaks = c(0, 0.45, 1)) +
+  labs(x = NULL, y = "Suitability (0–1)") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+```
+## Population Units
+
+Based on Williams et al. 2006, table 2. Tributaries not explicitly delineated in Table 2 are incorporated into the framework by nesting them within the population unit of the mainstem reach they enter. To determine which population unit a tributary belongs to, the Table 2 boundary descriptions are used. For example, a tributary entering the Klamath River between Portuguese Creek and Spencer Creek would fall within the Upper Klamath River unit (15c), while one entering between the Trinity River confluence and Portuguese Creek would fall within the Middle Klamath River unit (15b).
+
+Note that we added a population unit above Upper Klamath Lake that was not captured in Williams et al. 2006.
+
+```{r}
+table2 <- tribble(
+  ~basin,    ~id,   ~population_unit,                   ~boundaries,
+  "Klamath", "15a", "Lower Klamath River",              "Mouth of Klamath upstream to confluence with Trinity River",
+  "Klamath", "15b", "Middle Klamath River",             "Confluence of Trinity River upstream to Portuguese Creek (inclusive); Seiad and Grider creeks in Upper Klamath basin",
+  "Klamath", "15c", "Upper Klamath River",              "Portuguese Creek (non-inclusive) upstream to Spencer Creek (inclusive)",
+  "Klamath", "15d", "Salmon River",                     NA,
+  "Klamath", "15e", "Scott River",                      NA,
+  "Klamath", "15f", "Shasta River",                     NA,
+  "Klamath", "15g", "South Fork Trinity River",         "Confluence with Trinity River is lower boundary",
+  "Klamath", "15h", "Lower Trinity River",              "Confluence of Klamath River upstream to confluence with North Fork Trinity River (non-inclusive)",
+  "Klamath", "15i", "Upper Trinity River",              "Confluence of North Fork Trinity River (inclusive) upstream to Ramshorn Creek (inclusive)",
+  "Klamath",   "UKL",  "Upstream of Dam Removal",         "Upper Klamath Lake and tributaries - historic salmon range; includes Williamson River, Sprague River, Wood River, Lost River, and Link River"
+)
+
+tributary_units <- tribble(
+  ~gnis_nm,            ~population_unit_id,  ~in_soncc_esu,
+  "Blue Creek",        "15a",                TRUE,
+  "Bogus Creek",       "15c",                TRUE,
+  "Indian Creek",      "15h",                TRUE, # DOUBLE CHECK
+  "Clear Creek",       "15b",                TRUE, 
+  "Salmon River",      "15d",                TRUE,
+  "Scott River",       "15e",                TRUE,
+  "Shasta River",      "15f",                TRUE,
+  "Trinity River",     "15h",                TRUE, # DOUBLE CHECK
+  "Jenny Creek",       "15c",                TRUE,
+  "Camp Creek",        "15c",                TRUE,
+  "Scotch Creek",      "15c",                TRUE,
+  "Shovel Creek",      "15c",                TRUE,
+  "Spencer Creek",     "15c",                TRUE,
+  "Fall Creek",        "15c",                TRUE,
+  "Klamath River",     NA,                   TRUE,
+  "Williamson River",  "UKL",                   FALSE,
+  "Sprague River",     "UKL",                   FALSE,
+  "Wood River",        "UKL",                   FALSE,
+  "Lost River",        "UKL",                   FALSE,
+  "Link River",        "UKL",                   FALSE
+) |>
+  left_join(table2, by = c("population_unit_id" = "id"))
+
+```
+
+------------------------------------------------------------------------
+
+## Intrinsic Potential
+
+### Method
+
+Following Bjorkstedt et al. (2005), the reach-level IP score is the geometric mean of the three suitability scores:
+
+$$IP_{reach} = \left(S_{gradient} \times S_{discharge} \times S_{confinement}\right)^{1/3}$$
+
+The geometric mean gives the model the structure of a limiting-factors analysis: very low suitability on any single variable greatly reduces or eliminates the probability of suitable habitat, regardless of how favorable the other two variables are.
+
+At the watershed scale, IP is summarized as IP-km — the length-weighted sum of reach-level scores:
+
+$$IP\text{-}km = \sum_{i} L_i \times IP_{reach,i}$$
+
+where $L_i$ is the length of reach $i$ in kilometers. IP-km describes a watershed in terms of its expected equivalent length of continuous high-quality habitat: a watershed with 30 IP-km does not necessarily have 30 km of uniformly excellent habitat, but the weighted integral of lower-quality habitat sums to what would be expected from 30 km of optimal habitat (Bjorkstedt et al. 2005).
+
+> **Note:** All reaches are currently treated as accessible to anadromy. Once a barrier/passage layer is available, the IP-km sum should be restricted to accessible reaches.
+
+```{r suitability-fns, include=FALSE}
+suit_gradient <- function(s) {
+  case_when(
+    s <= 0          ~ 1.00,
+    s <  3          ~ 1.00 - (s / 3),
+    s >= 3          ~ 0.00,
+    TRUE            ~ NA_real_
+  )
+}
+
+suit_discharge <- function(q) {
+  case_when(
+    q >= 0  ~ 1.00,
+    TRUE    ~ NA_real_
+  )
+}
+
+suit_confinement <- function(vwi) {
+  case_when(
+    is.na(vwi) ~ NA_real_,
+    vwi >= 2   ~ 1.00,
+    vwi >= 0   ~ 0.80 + (vwi / 2) * 0.20,
+    TRUE       ~ NA_real_
+  )
+}
+```
+
+```{r compute-ip, include=FALSE}
+ip <- flowlines_ip |>
+  mutate(
+    reach_length_km = as.numeric(st_length(st_transform(geometry, 26910))) / 1000,
+    suit_grad       = suit_gradient(slope),
+    suit_q          = suit_discharge(discharge_mean_est),
+    suit_conf       = suit_confinement(valley_width_index),
+    IP_reach        = (suit_grad * suit_q * suit_conf)^(1/3)
+  )
+
+```
+
+### Reach-scale Results
+
+```{r ip-reach-table}
+ip |>
+  st_drop_geometry() |>
+  filter(!is.na(IP_reach)) |>
+  group_by(gnis_nm) |>
+  summarise(
+    Reaches  = n(),
+    Min      = round(min(IP_reach),    2),
+    Median   = round(median(IP_reach), 2),
+    Mean     = round(mean(IP_reach),   2),
+    Max      = round(max(IP_reach),    2),
+    .groups  = "drop"
+  ) |>
+  arrange(desc(Mean)) |>
+  knitr::kable(caption = "IP_reach distribution by stream (geometric mean of gradient, discharge, and valley confinement suitabilities).")
+```
+
+### Watershed-scale Results (IP-km)
+
+```{r ip-km-table}
+ip_km <- ip |>
+  filter(!is.na(IP_reach)) |>
+  st_drop_geometry() |>
+  group_by(gnis_nm) |>
+  summarise(
+    `IP-km`              = round(sum(reach_length_km * IP_reach, na.rm = TRUE), 1),
+    `Total length (km)`  = round(sum(reach_length_km, na.rm = TRUE), 1),
+    `Mean IP_reach`      = round(mean(IP_reach, na.rm = TRUE), 2),
+    Reaches              = n(),
+    .groups              = "drop"
+  ) |>
+  arrange(desc(`IP-km`))
+
+knitr::kable(
+  ip_km,
+  caption = "IP-km by stream: expected equivalent length of continuous high-quality habitat (Bjorkstedt et al. 2005)."
+)
+```
+
+### IP by Population Unit
+
+Geospatially define population units for the Klamath Rive, based on table 2 of Williams et al. 2006
+
+```{r echo=FALSE}
+# ── 1. Isolate and dissolve Klamath mainstem ──────────────────────────────────
+klamath_main <- ip |>
+  filter(gnis_nm == "Klamath River") |>
+  st_transform(32610) |> 
+  st_cast("LINESTRING")
+
+klamath_dissolved <- klamath_main |>
+  st_union() |>
+  st_as_sf()
+
+# ── 2. Define boundary confluence points ──────────────────────────────────────
+
+# Trinity River — snapped to mainstem
+trinity_raw <- ip |>
+  st_transform(32610) |>
+  filter(gnis_nm == "Trinity River") |>
+  st_union() |>
+  st_as_sf()
+
+trinity_snapped <- klamath_dissolved |>
+  st_nearest_points(trinity_raw) |>
+  st_cast("POINT") |>
+  st_as_sf() |>
+  slice(2) |>
+  mutate(gnis_nm = "Trinity River")
+st_geometry(trinity_snapped) <- "geometry"
+
+# Portuguese Creek — manual coordinate snapped to mainstem
+portuguese_raw <- st_point(c(-123.246608, 41.856725)) |>
+  st_sfc(crs = 4326) |>
+  st_transform(32610) |>
+  st_as_sf()
+
+portuguese_snapped <- klamath_dissolved |>
+  st_nearest_points(portuguese_raw) |>
+  st_cast("POINT") |>
+  st_as_sf() |>
+  slice(2) |>
+  mutate(gnis_nm = "Portuguese Creek")
+st_geometry(portuguese_snapped) <- "geometry"
+
+# Spencer Creek — snapped to mainstem
+spencer_raw <- ip |>
+  st_transform(32610) |>
+  filter(gnis_nm == "Spencer Creek") |>
+  st_union() |>
+  st_as_sf()
+
+spencer_snapped <- klamath_dissolved |>
+  st_nearest_points(spencer_raw) |>
+  st_cast("POINT") |>
+  st_as_sf() |>
+  slice(2) |>
+  mutate(gnis_nm = "Spencer Creek")
+st_geometry(spencer_snapped) <- "geometry"
+
+# combine
+all_pts <- bind_rows(trinity_snapped, portuguese_snapped, spencer_snapped)
+
+# extract coordinates
+pt_coords <- all_pts |>
+  mutate(
+    x = st_coordinates(geometry)[, 1],
+    y = st_coordinates(geometry)[, 2]
+  ) |>
+  st_drop_geometry()
+
+trinity_x    <- pt_coords |> filter(gnis_nm == "Trinity River")    |> pull(x)
+trinity_y    <- pt_coords |> filter(gnis_nm == "Trinity River")    |> pull(y)
+portuguese_x <- pt_coords |> filter(gnis_nm == "Portuguese Creek") |> pull(x)
+portuguese_y <- pt_coords |> filter(gnis_nm == "Portuguese Creek") |> pull(y)
+spencer_x    <- pt_coords |> filter(gnis_nm == "Spencer Creek")    |> pull(x)
+spencer_y    <- pt_coords |> filter(gnis_nm == "Spencer Creek")    |> pull(y)
+
+# ── 3. Get bounding box of full mainstem ──────────────────────────────────────
+
+bb <- st_bbox(klamath_dissolved)
+
+xmin <- bb["xmin"] - 10000
+xmax <- bb["xmax"] + 10000
+ymin <- bb["ymin"] - 10000
+ymax <- bb["ymax"] + 10000
+
+# ── 4. Build population unit polygons ────────────────────────────────────────
+# each polygon covers the portion of the map where that unit's river segments lie
+# we use the snapped point coordinates as dividing lines
+
+# 15a — Lower Klamath: everything west/downstream of Trinity confluence
+poly_15a <- st_polygon(list(rbind(
+  c(xmin,      ymin),
+  c(trinity_x, ymin),
+  c(trinity_x, ymax),
+  c(xmin,      ymax),
+  c(xmin,      ymin)
+))) |>
+  st_sfc(crs = 32610) |>
+  st_as_sf() |>
+  mutate(population_unit_id = "15a")
+
+# 15b — Middle Klamath: between Trinity and Portuguese Creek
+poly_15b <- st_polygon(list(rbind(
+  c(trinity_x,    ymin),
+  c(portuguese_x, ymin),
+  c(portuguese_x, ymax),
+  c(trinity_x,    ymax),
+  c(trinity_x,    ymin)
+))) |>
+  st_sfc(crs = 32610) |>
+  st_as_sf() |>
+  mutate(population_unit_id = "15b")
+
+# 15c — Upper Klamath: between Portuguese Creek and Spencer Creek
+poly_15c <- st_polygon(list(rbind(
+  c(portuguese_x, ymin),
+  c(spencer_x,    ymin),
+  c(spencer_x,    ymax),
+  c(portuguese_x, ymax),
+  c(portuguese_x, ymin)
+))) |>
+  st_sfc(crs = 32610) |>
+  st_as_sf() |>
+  mutate(population_unit_id = "15c")
+
+# UKL — everything east/upstream of Spencer Creek
+poly_ukl <- st_polygon(list(rbind(
+  c(spencer_x, ymin),
+  c(xmax,      ymin),
+  c(xmax,      ymax),
+  c(spencer_x, ymax),
+  c(spencer_x, ymin)
+))) |>
+  st_sfc(crs = 32610) |>
+  st_as_sf() |>
+  mutate(population_unit_id = "UKL")
+
+unit_polys <- bind_rows(poly_15a, poly_15b, poly_15c, poly_ukl)
+
+# ── 5. Assign population units via spatial join ───────────────────────────────
+# join each mainstem segment to whichever polygon its midpoint falls in
+
+klamath_midpoints <- klamath_main |>
+  mutate(
+    mid = st_line_sample(st_geometry(klamath_main), sample = 0.5) |>
+      st_cast("POINT"),
+    mid_x = st_coordinates(mid)[, 1],
+    mid_y = st_coordinates(mid)[, 2]
+  ) |>
+  st_drop_geometry() |>
+  st_as_sf(coords = c("mid_x", "mid_y"), crs = 32610)
+
+klamath_assigned <- klamath_midpoints |>
+  st_join(unit_polys, join = st_within) |>
+  st_drop_geometry() |>
+  select(nhdplusid, population_unit_id)
+
+# join assignments back to original segments
+klamath_units <- klamath_main |>
+  left_join(klamath_assigned, by = "nhdplusid") |>
+  left_join(
+    table2 |> select(id, population_unit, basin),
+    by = c("population_unit_id" = "id")
+  )
+
+# ── 7. Visual check ───────────────────────────────────────────────────────────
+
+ggplot() +
+  geom_sf(
+    data      = unit_polys,
+    aes(fill  = population_unit_id),
+    alpha     = 0.15,
+    color     = NA
+  ) +
+  geom_sf(
+    data      = klamath_units,
+    aes(color = population_unit),
+    linewidth = 1.4
+  ) +
+  geom_sf(
+    data  = all_pts,
+    size  = 3,
+    shape = 21,
+    fill  = "white",
+    color = "black"
+  ) +
+  geom_label_repel(
+    data        = all_pts,
+    aes(label   = gnis_nm,
+        geometry = geometry),
+    stat        = "sf_coordinates",
+    size        = 3,
+    box.padding = 0.4
+  ) +
+  scale_color_brewer(palette = "Set1",  name = "Population Unit") +
+  scale_fill_brewer( palette = "Set1",  name = "Population Unit") +
+  theme_bw() +
+  labs(
+    title    = "Klamath River Population Units",
+    subtitle = "Based on Williams et al. (2006) Table 2 boundaries"
+  )
+
+```
+
+Geospatially define population units for the Trinity River, based on table 2 of Williams et al. 2006
+
+```{r echo=FALSE}
+# ── 1. Isolate and dissolve Trinity mainstem ──────────────────────────────────
+
+trinity_main <- ip |>
+  filter(gnis_nm == "Trinity River") |>
+  st_transform(32610)
+
+trinity_dissolved <- trinity_main |>
+  st_union() |>
+  st_as_sf()
+
+# ── 2. Define boundary confluence points ──────────────────────────────────────
+
+# North Fork Trinity confluence — snapped to mainstem
+nf_raw <- st_point(c(-123.127119, 40.769987)) |>
+  st_sfc(crs = 4326) |>
+  st_transform(32610) |>
+  st_as_sf()
+
+nf_snapped <- trinity_dissolved |>
+  st_nearest_points(nf_raw) |>
+  st_cast("POINT") |>
+  st_as_sf() |>
+  slice(2) |>
+  mutate(gnis_nm = "North Fork Trinity River")
+st_geometry(nf_snapped) <- "geometry"
+
+# Ramshorn Creek confluence — snapped to mainstem
+ramshorn_raw <- st_point(c(-122.669006, 41.151606)) |>
+  st_sfc(crs = 4326) |>
+  st_transform(32610) |>
+  st_as_sf()
+
+ramshorn_snapped <- trinity_dissolved |>
+  st_nearest_points(ramshorn_raw) |>
+  st_cast("POINT") |>
+  st_as_sf() |>
+  slice(2) |>
+  mutate(gnis_nm = "Ramshorn Creek")
+st_geometry(ramshorn_snapped) <- "geometry"
+
+# combine boundary points
+trinity_pts <- bind_rows(nf_snapped, ramshorn_snapped)
+
+# ── 4. Extract coordinates for unit polygons ──────────────────────────────────
+
+trinity_pt_coords <- trinity_pts |>
+  mutate(
+    x = st_coordinates(geometry)[, 1],
+    y = st_coordinates(geometry)[, 2]
+  ) |>
+  st_drop_geometry()
+
+nf_x       <- trinity_pt_coords |> filter(gnis_nm == "North Fork Trinity River") |> pull(x)
+ramshorn_x <- trinity_pt_coords |> filter(gnis_nm == "Ramshorn Creek")           |> pull(x)
+
+# ── 5. Build population unit polygons ────────────────────────────────────────
+# per Table 2:
+# 15h Lower Trinity — Klamath confluence upstream to NF Trinity (non-inclusive)
+# 15i Upper Trinity — NF Trinity (inclusive) upstream to Ramshorn Creek (inclusive)
+# Trinity River segments upstream of Ramshorn are outside the ESU
+
+trinity_bb <- st_bbox(trinity_dissolved)
+
+xmin <- trinity_bb["xmin"] - 10000
+xmax <- trinity_bb["xmax"] + 10000
+ymin <- trinity_bb["ymin"] - 10000
+ymax <- trinity_bb["ymax"] + 10000
+
+# 15h — Lower Trinity: everything west/downstream of NF Trinity confluence
+poly_15h <- st_polygon(list(rbind(
+  c(xmin,  ymin),
+  c(nf_x,  ymin),
+  c(nf_x,  ymax),
+  c(xmin,  ymax),
+  c(xmin,  ymin)
+))) |>
+  st_sfc(crs = 32610) |>
+  st_as_sf() |>
+  mutate(population_unit_id = "15h")
+
+# 15i — Upper Trinity: NF Trinity to Ramshorn Creek
+poly_15i <- st_polygon(list(rbind(
+  c(nf_x,       ymin),
+  c(ramshorn_x, ymin),
+  c(ramshorn_x, ymax),
+  c(nf_x,       ymax),
+  c(nf_x,       ymin)
+))) |>
+  st_sfc(crs = 32610) |>
+  st_as_sf() |>
+  mutate(population_unit_id = "15i")
+
+# above Ramshorn — outside ESU
+poly_trinity_above <- st_polygon(list(rbind(
+  c(ramshorn_x, ymin),
+  c(xmax,       ymin),
+  c(xmax,       ymax),
+  c(ramshorn_x, ymax),
+  c(ramshorn_x, ymin)
+))) |>
+  st_sfc(crs = 32610) |>
+  st_as_sf() |>
+  mutate(population_unit_id = NA_character_)
+
+trinity_unit_polys <- bind_rows(poly_15h, poly_15i, poly_trinity_above)
+
+# ── 6. Assign population units via spatial join ───────────────────────────────
+
+trinity_midpoints <- trinity_main |>
+  mutate(
+    mid   = st_centroid(st_geometry(trinity_main)),
+    mid_x = st_coordinates(mid)[, 1],
+    mid_y = st_coordinates(mid)[, 2]
+  ) |>
+  st_drop_geometry() |>
+  st_as_sf(coords = c("mid_x", "mid_y"), crs = 32610)
+
+trinity_assigned <- trinity_midpoints |>
+  st_join(trinity_unit_polys, join = st_within) |>
+  st_drop_geometry() |>
+  select(nhdplusid, population_unit_id)
+
+trinity_units <- trinity_main |>
+  left_join(trinity_assigned, by = "nhdplusid") |>
+  left_join(
+    table2 |> select(id, population_unit, basin, boundaries),
+    by = c("population_unit_id" = "id")
+  ) |>
+  mutate(
+    gnis_nm      = "Trinity River",
+    in_soncc_esu = !is.na(population_unit_id)
+  )
+
+ggplot() +
+  geom_sf(
+    data      = trinity_units |> 
+      filter(!is.na(population_unit)),
+    aes(color = population_unit),
+    linewidth = 1.4
+  ) +
+  geom_sf(
+    data  = trinity_pts,
+    size  = 3,
+    shape = 21,
+    fill  = "white",
+    color = "black"
+  ) +
+  geom_label_repel(
+    data        = trinity_pts,
+    aes(label   = gnis_nm,
+        geometry = geometry),
+    stat        = "sf_coordinates",
+    size        = 3,
+    box.padding = 0.4
+  ) +
+  scale_color_brewer(palette = "Set1", name = "Population Unit",
+                     na.value = "grey60") +
+  theme_bw() +
+  labs(
+    title    = "Trinity River Population Units",
+    subtitle = "Based on Williams et al. (2006) Table 2 boundaries"
+  )
+```
+
+```{r echo=FALSE}
+ip_final <- bind_rows(
+  # non-Klamath rivers — join population units from tributary_units by name
+  ip |>
+    select(-any_of(c("population_unit_id", "population_unit", "basin",
+                     "in_soncc_esu", "boundaries"))) |>
+    filter(gnis_nm != "Klamath River") |>
+    st_transform(4326) |>
+    left_join(
+      tributary_units |>
+        select(gnis_nm, population_unit_id, population_unit,
+               basin, in_soncc_esu, boundaries),
+      by = "gnis_nm"
+    ),
+  # Klamath mainstem — population units already assigned spatially
+  klamath_units |>
+    mutate(in_soncc_esu = TRUE) |>
+    st_transform(4326) |>
+    st_cast("MULTILINESTRING")
+)
+# ── 9. Update ip_final ────────────────────────────────────────────────────────
+# replace the Trinity River rows that previously had a single unit
+# with the newly split lower/upper assignments
+
+ip_final <- ip_final |>
+  filter(gnis_nm != "Trinity River") |>
+  bind_rows(
+    trinity_units |>
+      st_transform(4326) |>
+      st_cast("MULTILINESTRING")
+  ) |> 
+  filter(!is.na(population_unit))
+```
+```{r}
+ggplot() +
+  geom_sf(
+    data      = ip_final,
+    aes(color = population_unit),
+    linewidth = 1.4
+  ) +
+  scale_color_brewer(palette = "Set1",  name = "Population Unit") +
+  theme_bw() +
+  labs(
+    title    = "All Population Units",
+    subtitle = "Based on Williams et al. (2006) Table 2 boundaries"
+  )
+
+```
+
+```{r}
+ip_final_pop_unit <- ip_final |>
+  st_drop_geometry() |>
+  group_by(population_unit) |>
+  summarise(
+    `IP-km`              = round(sum(reach_length_km * IP_reach, na.rm = TRUE), 1),
+    `Total length (km)`  = round(sum(reach_length_km, na.rm = TRUE), 1),
+    `Mean IP_reach`      = round(mean(IP_reach, na.rm = TRUE), 2),
+    Reaches              = n(),
+    .groups              = "drop"
+  ) |>
+  arrange(desc(`IP-km`))
+
+knitr::kable(
+  ip_final_pop_unit,
+  caption = "IP-km by population unit: expected equivalent length of continuous high-quality habitat in each population unit (Bjorkstedt et al. 2005, Williams et al. 2006)."
+)
+
+```
+
+```{r eval=FALSE, include=FALSE}
+# this is just for QC of population units 
+library(leaflet)
+library(leaflet.extras)
+
+# ── prep: reproject to WGS84 and define colors ────────────────────────────────
+
+ip_wgs <- ip_final |>
+  st_transform(4326) 
+
+# create color palette matching Set1
+units       <- unique(ip_wgs$population_unit)
+pal         <- colorFactor(
+  palette = RColorBrewer::brewer.pal(
+    n    = min(length(units), 9),
+    name = "Set1"
+  ),
+  domain  = ip_wgs$population_unit,
+  na.color = "grey60"
+)
+
+# ── build leaflet ─────────────────────────────────────────────────────────────
+
+leaflet(ip_wgs) |>
+  addProviderTiles(providers$Esri.WorldTopoMap, group = "Topo") |>
+  addProviderTiles(providers$Esri.WorldImagery,  group = "Satellite") |>
+  addPolylines(
+    color       = ~pal(population_unit),
+    weight      = 2,
+    opacity     = 0.9,
+    label       = ~paste0(gnis_nm, " — ", population_unit),
+    labelOptions = labelOptions(
+      style     = list("font-size" = "12px"),
+      direction = "auto"
+    ),
+    highlightOptions = highlightOptions(
+      weight    = 4,
+      opacity   = 1,
+      bringToFront = TRUE
+    )
+  ) |>
+  addLegend(
+    position = "bottomright",
+    pal      = pal,
+    values   = ~population_unit,
+    title    = "Population Unit<br><small>Williams et al. (2006)</small>",
+    opacity  = 0.9
+  ) |>
+  addLayersControl(
+    baseGroups    = c("Topo", "Satellite"),
+    options       = layersControlOptions(collapsed = FALSE)
+  ) |>
+  addResetMapButton() |>
+  addScaleBar(position = "bottomleft")
+
+```
+
+### Map
+
+```{r ip-map, fig.width=9, fig.height=7, fig.cap="Draft intrinsic potential for fall Chinook salmon spawning, Klamath Basin. Class breaks derived from Jenks natural breaks on IP_reach."}
+
+river_labels <- ip_final |>
+  filter(!is.na(gnis_nm), gnis_nm != "") |>
+  group_by(gnis_nm) |>
+  summarise(geometry = st_union(geometry), .groups = "drop") |>
+  st_point_on_surface() |>
+  mutate(
+    x = st_coordinates(geometry)[, 1],
+    y = st_coordinates(geometry)[, 2]
+  )
+
+ggplot() +
+  geom_sf(data = rivermile::klamath_hucs |> st_union(), fill = NA, color = "grey60") +
+  geom_sf(data = ip_final, aes(color = IP_reach), linewidth = 0.9) +
+  labs(
+    title    = "DRAFT — Fall Chinook Intrinsic Potential",
+    subtitle = expression(IP[reach] == (S[gradient] %.% S[discharge] %.% S[confinement])^{1/3}),
+    caption  = paste0(
+      "Suitability from Agrawal et al. 2005  ·  ",
+      "Thresholds not yet calibrated to local fish data"
+    )
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid   = element_blank(),
+    axis.title   = element_blank(),
+    plot.caption = element_text(size = 9, color = "grey40")
+  )
+```
+
+### Save data 
+
+Save data as `chinook_ip`
+
+```{r}
+chinook_ip <- ip_final |> 
+  filter(!is.na(IP_reach)) |>
+  st_drop_geometry() |>
+  group_by(river = gnis_nm, population_unit) |>
+  summarise(
+    `ip_km`              = round(sum(reach_length_km * IP_reach, na.rm = TRUE), 1),
+    `total_reach_length_km`  = round(sum(reach_length_km, na.rm = TRUE), 1),
+    `ip_mean`      = round(mean(IP_reach, na.rm = TRUE), 2),
+    n_reaches              = n(),
+    .groups              = "drop"
+  ) |> 
+  mutate(river = tolower(river),
+         population_unit = tolower(population_unit)) |> 
+  glimpse()
+
+usethis::use_data(chinook_ip, overwrite = TRUE)
+```
+
+```{r}
+knitr::knit_exit()
+```
+
+------------------------------------------------------------------------
+
+## Validation
+
+### Spawning Gravel Surveys
+
+RES conducted spawning gravel patch surveys within the former reservoir footprint and select tributaries. These data provide an initial qualitative check on whether reaches flagged as high IP_reach align with documented spawning habitat.
+
+Source: [Spawning Habitat Patch data](https://klamath-data-management-platform-klamath.hub.arcgis.com/maps/92cad013db7c445f87194f09e8fcc71e)
+
+```{r spawning-gravel}
+spawning_gravel <- sf::read_sf(
+  here::here("data-raw", "shapes", "Spawning_Habitat_Patch", "Spawning_Habitat_Patch.shp")
+)
+
+spawning_gravel |>
+  sf::st_drop_geometry() |>
+  janitor::clean_names() |>
+  group_by(survey_reac) |>
+  summarise(`Total patch area (sq ft)` = round(sum(patch_size_c, na.rm = TRUE), 0)) |>
+  arrange(desc(`Total patch area (sq ft)`)) |>
+  knitr::kable(caption = "Spawning gravel patch area by survey reach.")
+```
+
+------------------------------------------------------------------------
+
+## References
+
+Bjorkstedt, E.P., L.W. Spence, J.C. Garza, C. Michel, D. Leonard, N. Bill, J. Quinn, and P. Sonntag. 2005. *An analysis of salmonid population viability in California.* Report to the California Department of Fish and Game, Sacramento, CA.
+
+Burnett, K.M., G.H. Reeves, D.J. Miller, S. Clarke, K. Vance-Borland, and K. Christiansen. 2007. Distribution of salmon-habitat potential relative to landscape characteristics and implications for conservation. *Ecological Applications* 17(1):66–80.
+
+Bieger, K., H. Kling, J. Schürz, and H. Fürst. 2015. Introduction to SWAT+, a completely restructured version of the Soil and Water Assessment Tool. *JAWRA* 51:816–828.
+
+Busch, D.S., et al. 2013. Landscape-level model of potential Chinook salmon habitat. NOAA Northwest Fisheries Science Center.
+
+Beechie, T.J., E. Buhle, M. Ruckelshaus, A. Fullerton, and L. Holsinger. 2006. Hydrologic regime and the conservation of salmon life history diversity. *Biological Conservation* 130(4):560–572.
